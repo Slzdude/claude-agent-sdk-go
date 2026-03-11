@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	claude "github.com/anthropics/claude-agent-sdk-go"
+	claude "github.com/Slzdude/claude-agent-sdk-go"
 )
 
 // TestHookWithPermissionDecisionAndReason tests hooks returning permissionDecision
@@ -23,7 +23,7 @@ func TestHookWithPermissionDecisionAndReason(t *testing.T) {
 		Hooks: map[claude.HookEvent][]claude.HookMatcher{
 			claude.HookEventPreToolUse: {
 				{
-				Matcher: ptr("Bash"),
+					Matcher: ptr("Bash"),
 					Hooks: []claude.HookCallback{
 						func(ctx context.Context, input map[string]any, toolUseID string) (map[string]any, error) {
 							toolName, _ := input["tool_name"].(string)
@@ -36,18 +36,18 @@ func TestHookWithPermissionDecisionAndReason(t *testing.T) {
 									"reason":        "Bash commands are blocked in this test for safety",
 									"systemMessage": "⚠️ Command blocked by hook",
 									"hookSpecificOutput": map[string]any{
-										"hookEventName":             "PreToolUse",
-										"permissionDecision":        "deny",
-										"permissionDecisionReason":  "Security policy: Bash blocked",
+										"hookEventName":            "PreToolUse",
+										"permissionDecision":       "deny",
+										"permissionDecisionReason": "Security policy: Bash blocked",
 									},
 								}, nil
 							}
 							return map[string]any{
 								"reason": "Tool approved by security review",
 								"hookSpecificOutput": map[string]any{
-									"hookEventName":             "PreToolUse",
-									"permissionDecision":        "allow",
-									"permissionDecisionReason":  "Tool passed security checks",
+									"hookEventName":            "PreToolUse",
+									"permissionDecision":       "allow",
+									"permissionDecisionReason": "Tool passed security checks",
 								},
 							}, nil
 						},
@@ -97,7 +97,7 @@ func TestHookWithContinueAndStopReason(t *testing.T) {
 		Hooks: map[claude.HookEvent][]claude.HookMatcher{
 			claude.HookEventPostToolUse: {
 				{
-				Matcher: ptr("Bash"),
+					Matcher: ptr("Bash"),
 					Hooks: []claude.HookCallback{
 						func(ctx context.Context, input map[string]any, toolUseID string) (map[string]any, error) {
 							toolName, _ := input["tool_name"].(string)
@@ -164,11 +164,11 @@ func TestHookWithAdditionalContext(t *testing.T) {
 							hookInvocations = append(hookInvocations, "context_added")
 							mu.Unlock()
 							return map[string]any{
-								"systemMessage": "Additional context provided by hook",
-								"reason":        "Hook providing monitoring feedback",
+								"systemMessage":  "Additional context provided by hook",
+								"reason":         "Hook providing monitoring feedback",
 								"suppressOutput": false,
 								"hookSpecificOutput": map[string]any{
-									"hookEventName":    "PostToolUse",
+									"hookEventName":     "PostToolUse",
 									"additionalContext": "The command executed successfully with hook monitoring",
 								},
 							}, nil

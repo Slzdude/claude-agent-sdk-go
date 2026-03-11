@@ -8,7 +8,7 @@ import (
 	"os"
 	"testing"
 
-	claude "github.com/anthropics/claude-agent-sdk-go"
+	claude "github.com/Slzdude/claude-agent-sdk-go"
 )
 
 // TestSimpleStructuredOutput tests structured output with file counting.

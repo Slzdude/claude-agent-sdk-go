@@ -7,7 +7,7 @@ package e2e_test
 import (
 	"testing"
 
-	claude "github.com/anthropics/claude-agent-sdk-go"
+	claude "github.com/Slzdude/claude-agent-sdk-go"
 )
 
 // TestIncludePartialMessagesStreamEvents tests that include_partial_messages=true

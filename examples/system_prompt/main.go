@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 
-	claude "github.com/anthropics/claude-agent-sdk-go"
+	claude "github.com/Slzdude/claude-agent-sdk-go"
 )
 
 func printMessages(msgs <-chan claude.Message) {

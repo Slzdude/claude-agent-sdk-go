@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	claude "github.com/anthropics/claude-agent-sdk-go"
+	claude "github.com/Slzdude/claude-agent-sdk-go"
 )
 
 // TestPreToolUseHookWithAdditionalContext tests PreToolUse hook returning
@@ -34,10 +34,10 @@ func TestPreToolUseHookWithAdditionalContext(t *testing.T) {
 							mu.Unlock()
 							return map[string]any{
 								"hookSpecificOutput": map[string]any{
-									"hookEventName":               "PreToolUse",
-									"permissionDecision":          "allow",
-									"permissionDecisionReason":    "Approved with context",
-									"additionalContext":            "This command is running in a test environment",
+									"hookEventName":            "PreToolUse",
+									"permissionDecision":       "allow",
+									"permissionDecisionReason": "Approved with context",
+									"additionalContext":        "This command is running in a test environment",
 								},
 							}, nil
 						},
@@ -94,7 +94,7 @@ func TestPostToolUseHookWithToolUseID(t *testing.T) {
 							mu.Unlock()
 							return map[string]any{
 								"hookSpecificOutput": map[string]any{
-									"hookEventName":    "PostToolUse",
+									"hookEventName":     "PostToolUse",
 									"additionalContext": "Post-tool monitoring active",
 								},
 							}, nil
@@ -151,7 +151,7 @@ func TestNotificationHook(t *testing.T) {
 							mu.Unlock()
 							return map[string]any{
 								"hookSpecificOutput": map[string]any{
-									"hookEventName":    "Notification",
+									"hookEventName":     "Notification",
 									"additionalContext": "Notification received",
 								},
 							}, nil

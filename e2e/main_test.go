@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	claude "github.com/anthropics/claude-agent-sdk-go"
+	claude "github.com/Slzdude/claude-agent-sdk-go"
 )
 
 func TestMain(m *testing.M) {

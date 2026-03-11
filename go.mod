@@ -1,4 +1,4 @@
-module github.com/anthropics/claude-agent-sdk-go
+module github.com/Slzdude/claude-agent-sdk-go
 
 go 1.24.0
 

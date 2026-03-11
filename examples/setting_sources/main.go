@@ -21,7 +21,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	claude "github.com/anthropics/claude-agent-sdk-go"
+	claude "github.com/Slzdude/claude-agent-sdk-go"
 )
 
 // sdkDir returns the repo root (two levels up from examples/setting_sources/).

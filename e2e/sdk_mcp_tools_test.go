@@ -13,17 +13,17 @@ import (
 	"sync"
 	"testing"
 
-	claude "github.com/anthropics/claude-agent-sdk-go"
+	claude "github.com/Slzdude/claude-agent-sdk-go"
 )
 
 // simpleServer is a minimal in-process MCP server for e2e testing.
 type simpleServer struct {
-	name     string
-	version  string
-	tools    []claude.MCPTool
-	impls    map[string]func(context.Context, map[string]any) (claude.ToolResult, error)
-	execMu   sync.Mutex
-	execLog  []string
+	name    string
+	version string
+	tools   []claude.MCPTool
+	impls   map[string]func(context.Context, map[string]any) (claude.ToolResult, error)
+	execMu  sync.Mutex
+	execLog []string
 }
 
 func (s *simpleServer) Name() string    { return s.name }

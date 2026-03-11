@@ -25,7 +25,7 @@ import (
 	"os"
 	"time"
 
-	claude "github.com/anthropics/claude-agent-sdk-go"
+	claude "github.com/Slzdude/claude-agent-sdk-go"
 )
 
 // displayMessage prints a message in a standardized format.

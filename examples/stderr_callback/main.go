@@ -7,7 +7,7 @@ import (
 	"log"
 	"strings"
 
-	claude "github.com/anthropics/claude-agent-sdk-go"
+	claude "github.com/Slzdude/claude-agent-sdk-go"
 )
 
 func main() {

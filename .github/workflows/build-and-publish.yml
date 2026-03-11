@@ -77,6 +77,6 @@ jobs:
           git push origin "v$VERSION"
 
           awk -v ver="$VERSION" '/^## / { if (found) exit; if ($2 == ver) found=1; next } found { print }' CHANGELOG.md > release_notes.md
-          echo -e "\n---\n\n**Go module:** \`go get github.com/anthropics/claude-agent-sdk-go@v$VERSION\`" >> release_notes.md
+          echo -e "\n---\n\n**Go module:** \`go get github.com/Slzdude/claude-agent-sdk-go@v$VERSION\`" >> release_notes.md
 
           gh release create "v$VERSION" --title "v$VERSION" --notes-file release_notes.md

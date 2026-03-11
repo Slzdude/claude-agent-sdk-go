@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	claude "github.com/anthropics/claude-agent-sdk-go"
+	claude "github.com/Slzdude/claude-agent-sdk-go"
 )
 
 // TestStderrCallbackCapturesDebugOutput tests that stderr callback receives

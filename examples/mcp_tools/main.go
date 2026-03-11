@@ -11,7 +11,7 @@ import (
 	"log"
 	"math"
 
-	claude "github.com/anthropics/claude-agent-sdk-go"
+	claude "github.com/Slzdude/claude-agent-sdk-go"
 )
 
 // CalculatorServer implements claude.SdkMcpServer with basic math operations.

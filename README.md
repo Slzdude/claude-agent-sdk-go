@@ -5,7 +5,7 @@ Go SDK for Claude Agent. See the [Claude Agent SDK documentation](https://platfo
 ## Installation
 
 ```bash
-go get github.com/anthropics/claude-agent-sdk-go
+go get github.com/Slzdude/claude-agent-sdk-go
 ```
 
 **Prerequisites:**
@@ -23,7 +23,7 @@ import (
     "fmt"
     "log"
 
-    claude "github.com/anthropics/claude-agent-sdk-go"
+    claude "github.com/Slzdude/claude-agent-sdk-go"
 )
 
 func main() {
@@ -45,7 +45,7 @@ func main() {
 `Query()` sends a one-shot prompt to Claude and returns a channel of response messages.
 
 ```go
-import claude "github.com/anthropics/claude-agent-sdk-go"
+import claude "github.com/Slzdude/claude-agent-sdk-go"
 
 // Simple query
 ch, err := claude.Query(ctx, "Hello Claude", nil)
@@ -209,7 +209,7 @@ See [types.go](types.go) for complete type definitions:
 ## Error Handling
 
 ```go
-import claude "github.com/anthropics/claude-agent-sdk-go"
+import claude "github.com/Slzdude/claude-agent-sdk-go"
 
 ch, err := claude.Query(ctx, "Hello", nil)
 if err != nil {
