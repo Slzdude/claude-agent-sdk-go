@@ -6,55 +6,8 @@ import (
 	"encoding/json"
 	"io"
 	"os"
-	"os/exec"
-	"strings"
 	"testing"
 )
-
-// mockCLIScript creates a shell script that pretends to be the Claude CLI,
-// emitting a stream of JSON messages to stdout and then exiting.
-// It reads from stdin so the protocol handshake works correctly.
-func writeMockCLIScript(t *testing.T, lines []map[string]any) string {
-	t.Helper()
-
-	f, err := os.CreateTemp(t.TempDir(), "mock-claude-*.sh")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var sb strings.Builder
-	sb.WriteString("#!/bin/sh\n")
-	// Drain stdin so the SDK can write its messages.
-	sb.WriteString("cat > /dev/null &\n")
-	// Emit each JSON line.
-	for _, line := range lines {
-		b, _ := json.Marshal(line)
-		sb.WriteString("echo '")
-		sb.WriteString(strings.ReplaceAll(string(b), "'", "'\\''"))
-		sb.WriteString("'\n")
-	}
-	sb.WriteString("wait\n")
-
-	if _, err := io.WriteString(f, sb.String()); err != nil {
-		t.Fatal(err)
-	}
-	f.Close()
-	if err := os.Chmod(f.Name(), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return f.Name()
-}
-
-// newIntegrationTransport creates a cliTransport pointing to a mock CLI script.
-func newIntegrationTransport(t *testing.T, scriptPath string) *cliTransport {
-	t.Helper()
-	tr := &cliTransport{
-		opts:          &ClaudeAgentOptions{},
-		cliPath:       scriptPath,
-		maxBufferSize: defaultMaxBufferSize,
-	}
-	return tr
-}
 
 // runMockQuery creates a fake transport backed by the supplied JSON messages
 // and runs the full read-parse loop, returning all parsed messages.
@@ -147,12 +100,18 @@ func runMockQuery(t *testing.T, messages []map[string]any, opts *ClaudeAgentOpti
 	return out
 }
 
+// marshalLines converts a slice of maps to a slice of JSON strings.
+func marshalLines(msgs []map[string]any) []string {
+	lines := make([]string, 0, len(msgs))
+	for _, m := range msgs {
+		b, _ := json.Marshal(m)
+		lines = append(lines, string(b))
+	}
+	return lines
+}
+
 // TestIntegration_ParsesAssistantAndResult verifies the full parse pipeline.
 func TestIntegration_ParsesAssistantAndResult(t *testing.T) {
-	if _, err := exec.LookPath("sh"); err != nil {
-		t.Skip("sh not available")
-	}
-
 	messages := []map[string]any{
 		{
 			"type": "assistant",
@@ -176,18 +135,12 @@ func TestIntegration_ParsesAssistantAndResult(t *testing.T) {
 		},
 	}
 
-	script := writeMockCLIScript(t, messages)
-	tr := newIntegrationTransport(t, script)
-
-	if err := tr.connect(context.Background()); err != nil {
-		t.Fatal("connect:", err)
-	}
+	tr := mockTransportLines(t, marshalLines(messages)...)
+	q := newQueryProto(tr, &ClaudeAgentOptions{})
 	defer tr.close()
 
-	q := newQueryProto(tr, &ClaudeAgentOptions{})
 	rawCh := q.Run(context.Background())
 
-	// Skip the initialize handshake; just drain raw messages.
 	var parsed []Message
 	for raw := range rawCh {
 		msg, err := parseMessage(raw)
@@ -230,10 +183,6 @@ func TestIntegration_ParsesAssistantAndResult(t *testing.T) {
 
 // TestIntegration_ParsesToolUseBlock verifies tool_use blocks are parsed.
 func TestIntegration_ParsesToolUseBlock(t *testing.T) {
-	if _, err := exec.LookPath("sh"); err != nil {
-		t.Skip("sh not available")
-	}
-
 	messages := []map[string]any{
 		{
 			"type": "assistant",
@@ -253,15 +202,10 @@ func TestIntegration_ParsesToolUseBlock(t *testing.T) {
 		},
 	}
 
-	script := writeMockCLIScript(t, messages)
-	tr := newIntegrationTransport(t, script)
-
-	if err := tr.connect(context.Background()); err != nil {
-		t.Fatal("connect:", err)
-	}
+	tr := mockTransportLines(t, marshalLines(messages)...)
+	q := newQueryProto(tr, &ClaudeAgentOptions{})
 	defer tr.close()
 
-	q := newQueryProto(tr, &ClaudeAgentOptions{})
 	rawCh := q.Run(context.Background())
 
 	var parsed []Message

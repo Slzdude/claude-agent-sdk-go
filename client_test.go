@@ -1,7 +1,8 @@
 package claude
 
 // client_test.go covers end-to-end behaviour of processQuery / Query
-// using mock subprocess scripts, mirroring test_client.py and test_tool_callbacks.py.
+// using in-memory mock transports, mirroring test_client.py and
+// test_tool_callbacks.py. Cross-platform: no shell scripts are created.
 
 import (
 	"bufio"
@@ -9,34 +10,9 @@ import (
 	"encoding/json"
 	"io"
 	"os"
-	"os/exec"
 	"strings"
 	"testing"
 )
-
-// makeScript writes a POSIX shell script that echoes pre-encoded JSON
-// lines and drains stdin in the background.
-func makeScript(t *testing.T, lines ...string) string {
-	t.Helper()
-	f, err := os.CreateTemp(t.TempDir(), "mock-claude-*.sh")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var sb strings.Builder
-	sb.WriteString("#!/bin/sh\ncat > /dev/null &\n")
-	for _, l := range lines {
-		sb.WriteString("printf '%s\\n' '")
-		sb.WriteString(strings.ReplaceAll(l, "'", "'\\''"))
-		sb.WriteString("'\n")
-	}
-	sb.WriteString("wait\n")
-	if _, err := io.WriteString(f, sb.String()); err != nil {
-		t.Fatal(err)
-	}
-	f.Close()
-	os.Chmod(f.Name(), 0o755)
-	return f.Name()
-}
 
 // mustJSON marshals v or fatals.
 func mustJSON(v any) string {
@@ -47,20 +23,12 @@ func mustJSON(v any) string {
 	return string(b)
 }
 
-// buildTestProto connects a cliTransport to a mock script and returns a
-// ready-to-use queryProto whose Run() loop can be started.
-func buildTestProto(t *testing.T, scriptPath string, opts *ClaudeAgentOptions) (*queryProto, *cliTransport) {
+// buildTestProto creates a queryProto backed by an in-memory mock transport
+// (see mock_transport_test.go). No subprocess or shell script is involved.
+func buildTestProto(t *testing.T, tr *cliTransport, opts *ClaudeAgentOptions) (*queryProto, *cliTransport) {
 	t.Helper()
 	if opts == nil {
 		opts = &ClaudeAgentOptions{}
-	}
-	tr := &cliTransport{
-		opts:          opts,
-		cliPath:       scriptPath,
-		maxBufferSize: defaultMaxBufferSize,
-	}
-	if err := tr.connect(context.Background()); err != nil {
-		t.Fatal("connect:", err)
 	}
 	return newQueryProto(tr, opts), tr
 }
@@ -88,10 +56,6 @@ func drainMessages(t *testing.T, q *queryProto, tr *cliTransport) []Message {
 
 // TestClient_SimpleAssistantResponse verifies a text assistant response.
 func TestClient_SimpleAssistantResponse(t *testing.T) {
-	if _, err := exec.LookPath("sh"); err != nil {
-		t.Skip("sh not available")
-	}
-
 	lines := []string{
 		mustJSON(map[string]any{
 			"type": "assistant",
@@ -109,8 +73,8 @@ func TestClient_SimpleAssistantResponse(t *testing.T) {
 		}),
 	}
 
-	script := makeScript(t, lines...)
-	q, tr := buildTestProto(t, script, nil)
+	tr := mockTransportLines(t, lines...)
+	q, tr := buildTestProto(t, tr, nil)
 	msgs := drainMessages(t, q, tr)
 
 	if len(msgs) < 2 {
@@ -127,10 +91,6 @@ func TestClient_SimpleAssistantResponse(t *testing.T) {
 
 // TestClient_ResultMessageFields checks all ResultMessage fields are populated.
 func TestClient_ResultMessageFields(t *testing.T) {
-	if _, err := exec.LookPath("sh"); err != nil {
-		t.Skip("sh not available")
-	}
-
 	lines := []string{
 		mustJSON(map[string]any{
 			"type":            "result",
@@ -144,8 +104,8 @@ func TestClient_ResultMessageFields(t *testing.T) {
 		}),
 	}
 
-	script := makeScript(t, lines...)
-	q, tr := buildTestProto(t, script, nil)
+	tr := mockTransportLines(t, lines...)
+	q, tr := buildTestProto(t, tr, nil)
 	msgs := drainMessages(t, q, tr)
 
 	if len(msgs) < 1 {
