@@ -416,15 +416,23 @@ func (t *cliTransport) closeStdin() error {
 }
 
 func (t *cliTransport) close() error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	// Acquire stdinMu first to set closed and close stdin atomically with
+	// write() and closeStdin(). This mirrors the Python SDK's _write_lock
+	// which is held by both close() and write() to prevent TOCTOU races.
+	t.stdinMu.Lock()
 	if t.closed {
+		t.stdinMu.Unlock()
 		return nil
 	}
 	t.closed = true
 	if t.stdin != nil {
 		_ = t.stdin.Close()
 	}
+	t.stdinMu.Unlock()
+
+	// Kill the subprocess under t.mu, independent of stdin writes.
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	if t.cmd != nil && t.cmd.Process != nil {
 		_ = t.cmd.Process.Kill()
 		_ = t.cmd.Wait()
