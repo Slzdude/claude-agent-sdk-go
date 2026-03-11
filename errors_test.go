@@ -82,9 +82,9 @@ func TestCLIJSONDecodeError_LongLineTruncated(t *testing.T) {
 	longLine := strings.Repeat("x", 200)
 	err := &CLIJSONDecodeError{Line: longLine, Cause: errors.New("parse error")}
 	msg := err.Error()
-	// The error message should be truncated
+	// The error message should be within reasonable length bounds
 	if len(msg) > 200 {
-		// fine — just ensure it doesn't panic or emit the full 200-char line verbatim
+		t.Errorf("expected truncated message (len %d > 200)", len(msg))
 	}
 	if !strings.Contains(msg, "...") {
 		t.Error("long lines should be truncated with '...'")

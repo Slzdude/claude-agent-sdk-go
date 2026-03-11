@@ -92,10 +92,10 @@ func setupSessionFile(t *testing.T, lines []map[string]any) (projectDir string, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	for _, line := range lines {
 		b, _ := json.Marshal(line)
-		fmt.Fprintln(f, string(b))
+		_, _ = fmt.Fprintln(f, string(b))
 	}
 
 	t.Setenv("CLAUDE_CONFIG_DIR", tmpDir)
@@ -223,7 +223,7 @@ func TestListSessions_LimitApplied(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		f.Close()
+		_ = f.Close()
 	}
 
 	all, err := ListSessions(tmpDir, false, 0)
@@ -278,8 +278,8 @@ func TestListAllSessions_ReturnsSessionsFromAllProjects(t *testing.T) {
 			"type": "user", "uuid": sid,
 			"message": map[string]any{"role": "user", "content": "test prompt"},
 		})
-		fmt.Fprintln(f, string(b))
-		f.Close()
+		_, _ = fmt.Fprintln(f, string(b))
+		_ = f.Close()
 	}
 
 	all, err := ListAllSessions(0)
@@ -306,8 +306,8 @@ func TestListAllSessions_LimitApplied(t *testing.T) {
 			"type": "user", "uuid": sid,
 			"message": map[string]any{"role": "user", "content": "test"},
 		})
-		fmt.Fprintln(f, string(b))
-		f.Close()
+		_, _ = fmt.Fprintln(f, string(b))
+		_ = f.Close()
 	}
 
 	limited, err := ListAllSessions(1)

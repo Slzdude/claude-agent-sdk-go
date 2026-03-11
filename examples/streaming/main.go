@@ -75,7 +75,7 @@ func exampleBasicStreaming(ctx context.Context) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	fmt.Println("User: What is 2+2?")
 	if err := client.Query(ctx, "What is 2+2?"); err != nil {
@@ -97,7 +97,7 @@ func exampleMultiTurnConversation(ctx context.Context) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	// First turn.
 	fmt.Println("User: What's the capital of France?")
@@ -128,7 +128,7 @@ func exampleConcurrentResponses(ctx context.Context) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	// Start receiving all messages in a background goroutine (like Python's receive_messages()).
 	msgCh := client.ReceiveMessages(ctx)
@@ -156,7 +156,7 @@ func exampleConcurrentResponses(ctx context.Context) {
 
 	// Wait for responses and clean up.
 	time.Sleep(2 * time.Second)
-	client.Close()
+	_ = client.Close()
 	<-done
 
 	fmt.Println()
@@ -171,7 +171,7 @@ func exampleWithInterrupt(ctx context.Context) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	fmt.Println("\nUser: Count from 1 to 100 slowly")
 	if err := client.Query(ctx, "Count from 1 to 100 slowly, with a brief pause between each number"); err != nil {
@@ -212,7 +212,7 @@ func exampleManualMessageHandling(ctx context.Context) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	if err := client.Query(ctx, "List 5 programming languages and their main use cases"); err != nil {
 		log.Fatal(err)
@@ -263,7 +263,7 @@ func exampleWithOptions(ctx context.Context) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	fmt.Println("User: Create a simple hello.txt file with a greeting message")
 	if err := client.Query(ctx, "Create a simple hello.txt file with a greeting message"); err != nil {
@@ -337,7 +337,7 @@ func exampleBashCommand(ctx context.Context) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	fmt.Println("User: Run a bash echo command")
 	if err := client.Query(ctx, "Run a bash echo command that says 'Hello from bash!'"); err != nil {
@@ -409,7 +409,7 @@ func exampleControlProtocol(ctx context.Context) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	// 1. Get server initialization info.
 	fmt.Println("1. Getting server info...")
@@ -493,7 +493,7 @@ func exampleErrorHandling(ctx context.Context) {
 		}
 		return
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	fmt.Println("User: Run a bash sleep command for 60 seconds not in the background")
 	if err := client.Query(ctx, "Run a bash sleep command for 60 seconds not in the background"); err != nil {

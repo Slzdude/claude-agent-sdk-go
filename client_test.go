@@ -38,7 +38,7 @@ func drainMessages(t *testing.T, q *queryProto, tr *cliTransport) []Message {
 	t.Helper()
 	ctx := context.Background()
 	rawCh := q.Run(ctx)
-	defer tr.close()
+	defer func() { _ = tr.close() }()
 
 	var out []Message
 	for raw := range rawCh {
@@ -225,8 +225,8 @@ func TestToolCallback_Exception(t *testing.T) {
 	// We need a transport to capture the writeJSON output.
 	pr, pw := io.Pipe()
 	stdinR, stdinW, _ := os.Pipe()
-	defer stdinW.Close()
-	go io.Copy(io.Discard, stdinR)
+	defer func() { _ = stdinW.Close() }()
+	go func() { _, _ = io.Copy(io.Discard, stdinR) }()
 
 	tr := &cliTransport{
 		opts:          &ClaudeAgentOptions{},
@@ -244,7 +244,7 @@ func TestToolCallback_Exception(t *testing.T) {
 	q := newQueryProto(tr, opts)
 
 	// Close pipe after test so the test doesn't hang.
-	go func() { pw.Close() }()
+	go func() { _ = pw.Close() }()
 
 	// Capture written output by intercepting writeJSON via the same writer.
 	var written []byte
@@ -266,7 +266,7 @@ func TestToolCallback_Exception(t *testing.T) {
 	go func() {
 		defer close(done)
 		q.handleInboundControlRequest(context.Background(), envelope)
-		outW.Close()
+		_ = outW.Close()
 	}()
 	written, _ = io.ReadAll(outR)
 	<-done

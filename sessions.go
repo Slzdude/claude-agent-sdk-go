@@ -530,7 +530,7 @@ func readSessionLite(filePath string) (*sessionFileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	fi, err := f.Stat()
 	if err != nil {

@@ -27,7 +27,7 @@ func invokeControlRequest(t *testing.T, q *queryProto, envelope map[string]any) 
 	// Set up a minimal cliTransport that writes to outW.
 	if q.transport == nil {
 		stdinDummyR, stdinDummyW, _ := os.Pipe()
-		stdinDummyR.Close()
+		_ = stdinDummyR.Close()
 		tr := &cliTransport{
 			opts:          &ClaudeAgentOptions{},
 			maxBufferSize: defaultMaxBufferSize,
@@ -43,7 +43,7 @@ func invokeControlRequest(t *testing.T, q *queryProto, envelope map[string]any) 
 	go func() {
 		defer close(done)
 		q.handleInboundControlRequest(context.Background(), envelope)
-		outW.Close()
+		_ = outW.Close()
 	}()
 
 	written, _ := io.ReadAll(outR)
@@ -65,7 +65,7 @@ func invokeControlRequest(t *testing.T, q *queryProto, envelope map[string]any) 
 func makeQueryProtoWithHooks(t *testing.T, callbacks map[string]HookCallback) *queryProto {
 	t.Helper()
 	pr, pw := io.Pipe()
-	go pw.Close()
+	go func() { _ = pw.Close() }()
 	tr := &cliTransport{
 		opts:          &ClaudeAgentOptions{},
 		maxBufferSize: defaultMaxBufferSize,

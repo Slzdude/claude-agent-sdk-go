@@ -103,7 +103,7 @@ func TestStreamingClient_GetServerInfo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newMockSDKClientSimple: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	info := client.GetServerInfo()
 	if info == nil {
@@ -123,7 +123,7 @@ func TestStreamingClient_ReceiveResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newMockSDKClientSimple: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	// Query sends the user message.
 	if err := client.Query(ctx, "hello"); err != nil {
@@ -153,7 +153,7 @@ func TestStreamingClient_ReceiveResponseContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newMockSDKClientSimple: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	if err := client.Query(ctx, "help me"); err != nil {
 		t.Fatalf("Query: %v", err)
@@ -182,7 +182,7 @@ func TestStreamingClient_ResultMessageFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newMockSDKClientSimple: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	if err := client.Query(ctx, "go"); err != nil {
 		t.Fatalf("Query: %v", err)
@@ -218,7 +218,7 @@ func TestStreamingClient_ReceiveMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newMockSDKClientSimple: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	if err := client.Query(ctx, "hi"); err != nil {
 		t.Fatalf("Query: %v", err)
@@ -241,7 +241,7 @@ func TestStreamingClient_Interrupt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newMockSDKClientWithControl: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	if err := client.Interrupt(ctx); err != nil {
 		t.Errorf("Interrupt: %v", err)
@@ -255,7 +255,7 @@ func TestStreamingClient_SetPermissionMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newMockSDKClientWithControl: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	if err := client.SetPermissionMode(ctx, PermissionModeBypassPermissions); err != nil {
 		t.Errorf("SetPermissionMode: %v", err)
@@ -269,7 +269,7 @@ func TestStreamingClient_SetModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newMockSDKClientWithControl: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	model := "claude-opus-4-20250514"
 	if err := client.SetModel(ctx, &model); err != nil {
@@ -284,7 +284,7 @@ func TestStreamingClient_SetModelNil(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newMockSDKClientWithControl: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	if err := client.SetModel(ctx, nil); err != nil {
 		t.Errorf("SetModel(nil): %v", err)
@@ -298,7 +298,7 @@ func TestStreamingClient_ReconnectMcpServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newMockSDKClientWithControl: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	if err := client.ReconnectMcpServer(ctx, "my-server"); err != nil {
 		t.Errorf("ReconnectMcpServer: %v", err)
@@ -312,7 +312,7 @@ func TestStreamingClient_ToggleMcpServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newMockSDKClientWithControl: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	if err := client.ToggleMcpServer(ctx, "my-server", false); err != nil {
 		t.Errorf("ToggleMcpServer: %v", err)
@@ -326,7 +326,7 @@ func TestStreamingClient_QueryThenReceive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newMockSDKClientSimple: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	if err := client.Query(ctx, "what is 2+2?"); err != nil {
 		t.Fatalf("Query: %v", err)
@@ -370,7 +370,7 @@ func TestStreamingClient_ContextCancellation(t *testing.T) {
 
 	// Close the client to kill the subprocess and close stdin;
 	// ReceiveResponse should unblock within a few seconds.
-	client.Close()
+	_ = client.Close()
 
 	select {
 	case <-done:
@@ -514,13 +514,13 @@ func TestStreamingClient_DoubleConnect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first newMockSDKClientSimple: %v", err)
 	}
-	defer c1.Close()
+	defer func() { _ = c1.Close() }()
 
 	c2, err := newMockSDKClientSimple(ctx, t)
 	if err != nil {
 		t.Fatalf("second newMockSDKClientSimple: %v", err)
 	}
-	defer c2.Close()
+	defer func() { _ = c2.Close() }()
 }
 
 // TestStreamingClient_ContextManagerWithException mirrors test_context_manager_with_exception:
@@ -535,7 +535,7 @@ func TestStreamingClient_ContextManagerWithException(t *testing.T) {
 			t.Fatalf("newMockSDKClientSimple: %v", err)
 		}
 		defer func() {
-			client.Close()
+			_ = client.Close()
 			closed = true
 		}()
 		// Simulate user code that panics/returns early.
@@ -557,7 +557,7 @@ func TestStreamingClient_StopTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newMockSDKClientWithControl: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	if err := client.StopTask(ctx, "task-abc123"); err != nil {
 		t.Errorf("StopTask: %v", err)
@@ -604,7 +604,7 @@ func TestStreamingClient_GetMcpStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClaudeSDKClient: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	status, err := client.GetMcpStatus(ctx)
 	if err != nil {
@@ -645,7 +645,7 @@ func TestStreamingClient_ReceiveResponseListComprehension(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newMockSDKClientSimple: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	if err := client.Query(ctx, "question"); err != nil {
 		t.Fatalf("Query: %v", err)
@@ -677,7 +677,7 @@ func TestStreamingClient_ConcurrentSendReceive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newMockSDKClientSimple: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	// Start ReceiveResponse in a goroutine.
 	msgCh := make(chan []Message, 1)

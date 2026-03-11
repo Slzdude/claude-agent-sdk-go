@@ -1,104 +1,10 @@
 package claude
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
-	"io"
-	"os"
 	"testing"
 )
-
-// runMockQuery creates a fake transport backed by the supplied JSON messages
-// and runs the full read-parse loop, returning all parsed messages.
-//
-// The function inserts a synthetic initialize control_response at the start so
-// that Initialize() succeeds without modifying the callers messages slice.
-func runMockQuery(t *testing.T, messages []map[string]any, opts *ClaudeAgentOptions) []Message {
-	t.Helper()
-
-	if opts == nil {
-		opts = &ClaudeAgentOptions{}
-	}
-
-	// We need a way to feed messages without a real subprocess.
-	// Use a pipe-pair: the test writes JSON to one end; transport reads from the other.
-	pr, pw := io.Pipe()
-
-	// Build the sequence: first emit the initialize control_response, then the
-	// caller's messages.
-	go func() {
-		defer pw.Close()
-		w := bufio.NewWriter(pw)
-
-		// Fake initialize response.
-		reqID := "init-req"
-		initResp := map[string]any{
-			"type": "control_response",
-			"response": map[string]any{
-				"subtype":    "success",
-				"request_id": reqID,
-				"response":   map[string]any{},
-			},
-		}
-		b, _ := json.Marshal(initResp)
-		w.Write(b)
-		w.WriteByte('\n')
-
-		for _, msg := range messages {
-			b, _ := json.Marshal(msg)
-			w.Write(b)
-			w.WriteByte('\n')
-		}
-		w.Flush()
-	}()
-
-	// Build a fake transport that reads from the pipe.
-	// We have to intercept the Initialize request_id.
-	// Instead of using the full transport, wire the pipe directly into the
-	// queryProto via a real cliTransport with faked stdin/stdout.
-	tr := &cliTransport{
-		opts:          opts,
-		maxBufferSize: defaultMaxBufferSize,
-	}
-	// Normally connect() sets these; set them manually.
-	stdinR, stdinW, _ := os.Pipe()
-	tr.stdin = stdinW
-	tr.stdout = bufio.NewScanner(pr)
-	tr.stdout.Buffer(make([]byte, defaultMaxBufferSize), defaultMaxBufferSize)
-
-	// Discard stdin writes (we don't need a real process).
-	go func() {
-		io.Copy(io.Discard, stdinR)
-		stdinR.Close()
-	}()
-
-	q := newQueryProto(tr, opts)
-
-	ctx := context.Background()
-	rawCh := q.Run(ctx)
-
-	// Initialize — the goroutine above will send the fake response.
-	// We need to figure out the request_id that Initialize() will use.
-	// To do this cleanly, we intercept the write to inject the correct ID.
-	// Simpler: replace sendControl with a version that matches any pending request.
-	if _, err := q.Initialize(ctx); err != nil {
-		// Initialize might fail if the fake response doesn't match the request_id.
-		// In that case skip — use unit tests instead of integration tests here.
-		t.Logf("Initialize failed (expected in some cases): %v", err)
-	}
-
-	// Drain rawCh → parse messages.
-	var out []Message
-	for raw := range rawCh {
-		msg, err := parseMessage(raw)
-		if err != nil || msg == nil {
-			continue
-		}
-		out = append(out, msg)
-	}
-	return out
-}
 
 // marshalLines converts a slice of maps to a slice of JSON strings.
 func marshalLines(msgs []map[string]any) []string {
@@ -137,7 +43,7 @@ func TestIntegration_ParsesAssistantAndResult(t *testing.T) {
 
 	tr := mockTransportLines(t, marshalLines(messages)...)
 	q := newQueryProto(tr, &ClaudeAgentOptions{})
-	defer tr.close()
+	defer func() { _ = tr.close() }()
 
 	rawCh := q.Run(context.Background())
 
@@ -204,7 +110,7 @@ func TestIntegration_ParsesToolUseBlock(t *testing.T) {
 
 	tr := mockTransportLines(t, marshalLines(messages)...)
 	q := newQueryProto(tr, &ClaudeAgentOptions{})
-	defer tr.close()
+	defer func() { _ = tr.close() }()
 
 	rawCh := q.Run(context.Background())
 

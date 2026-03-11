@@ -156,13 +156,13 @@ func main() {
 		}
 
 		if err := client.Query(ctx, prompt); err != nil {
-			client.Close()
+			_ = client.Close()
 			log.Fatal(err)
 		}
 
 		for msg := range client.ReceiveResponse(ctx) {
 			displayMessage(msg)
 		}
-		client.Close()
+		_ = client.Close()
 	}
 }

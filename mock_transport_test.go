@@ -30,7 +30,7 @@ func mockTransportLines(t *testing.T, lines ...string) *cliTransport {
 	stdinR, stdinW := io.Pipe()
 
 	go func() {
-		defer outW.Close()
+		defer func() { _ = outW.Close() }()
 		// Drain stdin in the background so transport writes never block.
 		go io.Copy(io.Discard, stdinR) //nolint:errcheck
 		w := bufio.NewWriter(outW)
@@ -67,7 +67,7 @@ func mockTransportWithInit(t *testing.T, lines ...string) *cliTransport {
 	stdinR, stdinW := io.Pipe()
 
 	go func() {
-		defer outW.Close()
+		defer func() { _ = outW.Close() }()
 		sc := bufio.NewScanner(stdinR)
 
 		// Read and respond to the initialize control_request.
@@ -136,7 +136,7 @@ func mockTransportWithInitAndControl(t *testing.T, responseSubtype string, lines
 	stdinR, stdinW := io.Pipe()
 
 	go func() {
-		defer outW.Close()
+		defer func() { _ = outW.Close() }()
 		sc := bufio.NewScanner(stdinR)
 		w := bufio.NewWriter(outW)
 
@@ -225,7 +225,7 @@ func mockTransportHanging(t *testing.T) *cliTransport {
 	stdinR, stdinW := io.Pipe()
 
 	go func() {
-		defer outW.Close()
+		defer func() { _ = outW.Close() }()
 		sc := bufio.NewScanner(stdinR)
 
 		// Respond to initialize.
@@ -320,7 +320,7 @@ func mockTransportWithMCP(t *testing.T, serverName string) *cliTransport {
 	})
 
 	go func() {
-		defer outW.Close()
+		defer func() { _ = outW.Close() }()
 		sc := bufio.NewScanner(stdinR)
 		w := bufio.NewWriter(outW)
 
@@ -549,7 +549,7 @@ func mockTransportWithMcpStatus(t *testing.T, mcpStatusJSON string) *cliTranspor
 	stdinR, stdinW := io.Pipe()
 
 	go func() {
-		defer outW.Close()
+		defer func() { _ = outW.Close() }()
 		sc := bufio.NewScanner(stdinR)
 		w := bufio.NewWriter(outW)
 
