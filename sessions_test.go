@@ -74,8 +74,16 @@ func TestSimpleHash_Distinct(t *testing.T) {
 func setupSessionFile(t *testing.T, lines []map[string]any) (projectDir string, sessionID string, cleanup func()) {
 	t.Helper()
 	tmpDir := t.TempDir()
+	// Resolve symlinks so the sanitized project dir name matches what
+	// readSessionFileContent derives when it calls filepath.EvalSymlinks on
+	// the directory argument. On macOS, t.TempDir() returns /tmp/... which
+	// is a symlink to /private/tmp/..., causing a mismatch without this step.
+	realTmpDir := tmpDir
+	if resolved, err := filepath.EvalSymlinks(tmpDir); err == nil {
+		realTmpDir = resolved
+	}
 	sessionID = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"
-	projectDir = filepath.Join(tmpDir, "projects", sanitizePath(tmpDir))
+	projectDir = filepath.Join(tmpDir, "projects", sanitizePath(realTmpDir))
 	if err := os.MkdirAll(projectDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
