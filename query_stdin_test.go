@@ -148,9 +148,9 @@ func TestQuery_StdinClosedImmediately(t *testing.T) {
 	assistantLine, _ := json.Marshal(map[string]any{
 		"type": "assistant",
 		"message": map[string]any{
-			"role": "assistant",
+			"role":    "assistant",
 			"content": []any{map[string]any{"type": "text", "text": "Hello!"}},
-			"model": "claude-sonnet-4-20250514",
+			"model":   "claude-sonnet-4-20250514",
 		},
 	})
 	resultLine, _ := json.Marshal(map[string]any{
