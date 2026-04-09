@@ -1,13 +1,12 @@
 package claude
 
-// rate_limit_test.go mirrors test_rate_limit_event_repro.py:
-// Verify that rate_limit_event and unknown message types return nil (not an error)
-// from parseMessage, making the SDK forward-compatible with new CLI message types.
+// rate_limit_test.go verifies that rate_limit_event messages are now properly
+// parsed into RateLimitEvent (previously they were skipped as unknown types).
 
 import "testing"
 
-// TestRateLimitEvent_ReturnsNil checks that a rate_limit_event is silently skipped.
-func TestRateLimitEvent_ReturnsNil(t *testing.T) {
+// TestRateLimitEvent_Parsed checks that a rate_limit_event is parsed into RateLimitEvent.
+func TestRateLimitEvent_Parsed(t *testing.T) {
 	data := map[string]any{
 		"type": "rate_limit_event",
 		"rate_limit_info": map[string]any{
@@ -25,13 +24,23 @@ func TestRateLimitEvent_ReturnsNil(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
-	if result != nil {
-		t.Errorf("expected nil for rate_limit_event, got %T", result)
+	if result == nil {
+		t.Fatal("expected RateLimitEvent, got nil")
+	}
+	evt, ok := result.(*RateLimitEvent)
+	if !ok {
+		t.Fatalf("expected *RateLimitEvent, got %T", result)
+	}
+	if evt.RateLimitInfo.Status != RateLimitAllowedWarning {
+		t.Errorf("expected status allowed_warning, got %q", evt.RateLimitInfo.Status)
+	}
+	if evt.UUID != "550e8400-e29b-41d4-a716-446655440000" {
+		t.Errorf("wrong UUID: %q", evt.UUID)
 	}
 }
 
-// TestRateLimitEventRejected_ReturnsNil checks that a hard rate limit is also skipped.
-func TestRateLimitEventRejected_ReturnsNil(t *testing.T) {
+// TestRateLimitEventRejected_Parsed checks that a hard rate limit is also parsed.
+func TestRateLimitEventRejected_Parsed(t *testing.T) {
 	data := map[string]any{
 		"type": "rate_limit_event",
 		"rate_limit_info": map[string]any{
@@ -50,8 +59,15 @@ func TestRateLimitEventRejected_ReturnsNil(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
-	if result != nil {
-		t.Errorf("expected nil for rejected rate_limit_event, got %T", result)
+	if result == nil {
+		t.Fatal("expected RateLimitEvent, got nil")
+	}
+	evt, ok := result.(*RateLimitEvent)
+	if !ok {
+		t.Fatalf("expected *RateLimitEvent, got %T", result)
+	}
+	if evt.RateLimitInfo.Status != RateLimitRejected {
+		t.Errorf("expected status rejected, got %q", evt.RateLimitInfo.Status)
 	}
 }
 

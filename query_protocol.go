@@ -37,6 +37,13 @@ type queryProto struct {
 	// pending maps request_id to response channel for SDK-initiated control requests.
 	pendingMu sync.Mutex
 	pending   map[string]chan controlResult
+
+	// inflightHandlers tracks running inbound request handlers for cancellation.
+	inflightMu      sync.Mutex
+	inflightHandlers map[string]context.CancelFunc
+
+	// excludeDynamicSections is sent in the initialize request when set.
+	excludeDynamicSections *bool
 }
 
 type controlResult struct {
@@ -46,12 +53,13 @@ type controlResult struct {
 
 func newQueryProto(t *cliTransport, opts *ClaudeAgentOptions) *queryProto {
 	return &queryProto{
-		transport:     t,
-		opts:          opts,
-		hookCallbacks: make(map[string]HookCallback),
-		hookTimeouts:  make(map[string]float64),
-		firstResultCh: make(chan struct{}),
-		pending:       make(map[string]chan controlResult),
+		transport:              t,
+		opts:                   opts,
+		hookCallbacks:          make(map[string]HookCallback),
+		hookTimeouts:           make(map[string]float64),
+		firstResultCh:          make(chan struct{}),
+		pending:                make(map[string]chan controlResult),
+		inflightHandlers:       make(map[string]context.CancelFunc),
 	}
 }
 
@@ -61,6 +69,15 @@ func (q *queryProto) SetSDKMCPServers(servers map[string]SdkMcpServer) {
 
 func (q *queryProto) SetAgents(agents map[string]map[string]any) {
 	q.agents = agents
+}
+
+func (q *queryProto) SetExcludeDynamicSections(v *bool) {
+	q.excludeDynamicSections = v
+}
+
+// GetContextUsage sends a get_context_usage control request and returns the raw response.
+func (q *queryProto) GetContextUsage(ctx context.Context) (map[string]any, error) {
+	return q.SendControlRequest(ctx, map[string]any{"subtype": "get_context_usage"}, 15*time.Second)
 }
 
 // GetInitResult returns the server information received in the initialize response.
@@ -128,6 +145,9 @@ func (q *queryProto) Initialize(ctx context.Context) (map[string]any, error) {
 
 	if len(q.agents) > 0 {
 		reqPayload["agents"] = q.agents
+	}
+	if q.excludeDynamicSections != nil {
+		reqPayload["excludeDynamicSections"] = *q.excludeDynamicSections
 	}
 
 	resp, err := q.SendControlRequest(ctx, reqPayload, 30*time.Second)
@@ -218,10 +238,30 @@ func (q *queryProto) Run(ctx context.Context) <-chan map[string]any {
 			switch msgType {
 			case "control_request":
 				// Inbound control request from CLI → SDK.
-				go q.handleInboundControlRequest(ctx, raw)
+				reqID := strVal(raw, "request_id")
+				handlerCtx, cancel := context.WithCancel(ctx)
+				q.inflightMu.Lock()
+				q.inflightHandlers[reqID] = cancel
+				q.inflightMu.Unlock()
+				go func() {
+					q.handleInboundControlRequest(handlerCtx, raw)
+					q.inflightMu.Lock()
+					delete(q.inflightHandlers, reqID)
+					q.inflightMu.Unlock()
+				}()
 
 			case "control_cancel_request":
-				// CLI is cancelling a pending inbound request — drop silently.
+				// CLI is cancelling a pending inbound request.
+				cancelID := strVal(raw, "request_id")
+				if cancelID != "" {
+					q.inflightMu.Lock()
+					cancel, ok := q.inflightHandlers[cancelID]
+					delete(q.inflightHandlers, cancelID)
+					q.inflightMu.Unlock()
+					if ok {
+						cancel()
+					}
+				}
 
 			case "control_response":
 				// Response to an SDK-initiated control request.
@@ -361,6 +401,8 @@ func (q *queryProto) handleCanUseTool(ctx context.Context, req map[string]any) (
 	if sig, ok := req["signal"]; ok {
 		permCtx.Signal = sig
 	}
+	permCtx.ToolUseID = strVal(req, "tool_use_id")
+	permCtx.AgentID = strVal(req, "agent_id")
 
 	result, err := q.opts.CanUseTool(ctx, toolName, toolInput, permCtx)
 	if err != nil {
@@ -443,14 +485,26 @@ func (q *queryProto) handleMCPMessage(ctx context.Context, req map[string]any) (
 		}), nil
 
 	case "notifications/initialized":
-		// Notification — no response body required.
-		return map[string]any{"mcp_response": map[string]any{}}, nil
+		// Notification — respond with JSON-RPC envelope (matching Python SDK).
+		return map[string]any{"mcp_response": map[string]any{
+			"jsonrpc": "2.0",
+			"id":      msgID,
+			"result":  map[string]any{},
+		}}, nil
 
 	case "tools/list":
 		tools, err := server.ListTools(ctx)
 		if err != nil {
 			return buildError(-32603, err.Error()), nil
 		}
+			// Forward maxResultSizeChars via _meta for tools that have it.
+			for i := range tools {
+				if tools[i].Annotations != nil && tools[i].Annotations.MaxResultSizeChars != nil {
+					tools[i].Meta = map[string]any{
+						"anthropic/maxResultSizeChars": *tools[i].Annotations.MaxResultSizeChars,
+					}
+				}
+			}
 		b, _ := json.Marshal(map[string]any{"tools": tools})
 		var result map[string]any
 		_ = json.Unmarshal(b, &result)

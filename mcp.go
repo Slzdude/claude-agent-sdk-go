@@ -64,14 +64,16 @@ type MCPTool struct {
 	Description string           `json:"description,omitempty"`
 	InputSchema map[string]any   `json:"inputSchema"`
 	Annotations *ToolAnnotations `json:"annotations,omitempty"`
+	Meta        map[string]any   `json:"_meta,omitempty"`
 }
 
 // ToolAnnotations provides optional hints about a tool's behaviour.
 type ToolAnnotations struct {
-	ReadOnlyHint    *bool `json:"readOnlyHint,omitempty"`
-	DestructiveHint *bool `json:"destructiveHint,omitempty"`
-	IdempotentHint  *bool `json:"idempotentHint,omitempty"`
-	OpenWorldHint   *bool `json:"openWorldHint,omitempty"`
+	ReadOnlyHint        *bool `json:"readOnlyHint,omitempty"`
+	DestructiveHint     *bool `json:"destructiveHint,omitempty"`
+	IdempotentHint      *bool `json:"idempotentHint,omitempty"`
+	OpenWorldHint       *bool `json:"openWorldHint,omitempty"`
+	MaxResultSizeChars  *int  `json:"maxResultSizeChars,omitempty"`
 }
 
 // McpToolInfo describes a single tool exposed by an MCP server.

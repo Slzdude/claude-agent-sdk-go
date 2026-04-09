@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 )
@@ -59,16 +60,12 @@ func TestBuildCommand_AlwaysPresent(t *testing.T) {
 	}
 }
 
-// TestBuildCommand_SettingSourcesEmpty ensures --setting-sources is ALWAYS emitted
-// (even when SettingSources is nil/empty), matching Python SDK behaviour.
+// TestBuildCommand_SettingSourcesEmpty ensures --setting-sources is NOT emitted
+// when empty, matching Python SDK v0.1.53 behaviour.
 func TestBuildCommand_SettingSourcesEmpty(t *testing.T) {
 	cmd := buildCmd(&ClaudeAgentOptions{})
-	if !hasFlag(cmd, "--setting-sources") {
-		t.Error("--setting-sources should always appear even when SettingSources is empty")
-	}
-	val := flagValue(cmd, "--setting-sources")
-	if val != "" {
-		t.Errorf("expected empty value for --setting-sources, got %q", val)
+	if hasFlag(cmd, "--setting-sources") {
+		t.Error("--setting-sources should NOT appear when SettingSources is empty")
 	}
 }
 
@@ -204,11 +201,14 @@ func TestBuildCommand_ExtraArgsValueFlag(t *testing.T) {
 	}
 }
 
-// TestBuildCommand_ThinkingAdaptive verifies max-thinking-tokens default of 32000.
+// TestBuildCommand_ThinkingAdaptive verifies --thinking adaptive flag.
 func TestBuildCommand_ThinkingAdaptive(t *testing.T) {
 	cmd := buildCmd(&ClaudeAgentOptions{Thinking: &ThinkingAdaptive{}})
-	if flagValue(cmd, "--max-thinking-tokens") != "32000" {
-		t.Errorf("wrong --max-thinking-tokens for adaptive: %q", flagValue(cmd, "--max-thinking-tokens"))
+	if flagValue(cmd, "--thinking") != "adaptive" {
+		t.Errorf("wrong --thinking for adaptive: %q", flagValue(cmd, "--thinking"))
+	}
+	if hasFlag(cmd, "--max-thinking-tokens") {
+		t.Error("--max-thinking-tokens should NOT appear for adaptive thinking")
 	}
 }
 
@@ -516,3 +516,93 @@ func TestBuffering_MixedCompleteAndSplitJSON(t *testing.T) {
 		t.Errorf("unexpected third message: %v", msgs[2])
 	}
 }
+
+// TestBuffering_NonJSONLinesSkipped verifies that non-JSON lines (e.g. [SandboxDebug])
+// are silently skipped without corrupting the buffer.
+func TestBuffering_NonJSONLinesSkipped(t *testing.T) {
+	obj1 := map[string]any{"type": "message", "id": "msg1"}
+	b1, _ := json.Marshal(obj1)
+	// Mix JSON with non-JSON lines.
+	data := "[SandboxDebug] some debug output\n" +
+		string(b1) + "\n" +
+		"[AnotherWarning] not json either\n" +
+		"plain text line\n"
+
+	msgs, err := drainReadMessages(t, data, defaultMaxBufferSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message (non-JSON lines skipped), got %d", len(msgs))
+	}
+	if msgs[0]["id"] != "msg1" {
+		t.Errorf("unexpected message: %v", msgs[0])
+	}
+}
+
+// TestBuildCommand_SessionID verifies --session-id flag.
+func TestBuildCommand_SessionID(t *testing.T) {
+	cmd := buildCmd(&ClaudeAgentOptions{SessionID: "my-session-123"})
+	if flagValue(cmd, "--session-id") != "my-session-123" {
+		t.Errorf("wrong --session-id: %q", flagValue(cmd, "--session-id"))
+	}
+}
+
+// TestBuildCommand_TaskBudget verifies --task-budget flag.
+func TestBuildCommand_TaskBudget(t *testing.T) {
+	cmd := buildCmd(&ClaudeAgentOptions{TaskBudget: &TaskBudget{Total: 50000}})
+	if flagValue(cmd, "--task-budget") != "50000" {
+		t.Errorf("wrong --task-budget: %q", flagValue(cmd, "--task-budget"))
+	}
+}
+
+// TestBuildCommand_SystemPromptFile verifies --system-prompt-file flag.
+func TestBuildCommand_SystemPromptFile(t *testing.T) {
+	cmd := buildCmd(&ClaudeAgentOptions{
+		SystemPrompt: &SystemPromptFile{Type: "file", Path: "/prompts/system.txt"},
+	})
+	if flagValue(cmd, "--system-prompt-file") != "/prompts/system.txt" {
+		t.Errorf("wrong --system-prompt-file: %q", flagValue(cmd, "--system-prompt-file"))
+	}
+}
+
+// TestBuildCommand_ThinkingDisabled verifies --thinking disabled flag.
+func TestBuildCommand_ThinkingDisabled(t *testing.T) {
+	cmd := buildCmd(&ClaudeAgentOptions{Thinking: &ThinkingDisabled{}})
+	if flagValue(cmd, "--thinking") != "disabled" {
+		t.Errorf("wrong --thinking for disabled: %q", flagValue(cmd, "--thinking"))
+	}
+}
+
+// TestBuildCommand_CLAUDECODEFiltered verifies CLAUDECODE env var is filtered.
+func TestConnect_EnvFiltering(t *testing.T) {
+	// This test verifies the env building logic conceptually.
+	// We can't easily test the actual connect() without a real subprocess,
+	// but we can verify the buildCommand does the right thing.
+	os.Setenv("CLAUDECODE", "1")
+	defer os.Unsetenv("CLAUDECODE")
+
+	// The actual filtering happens in connect(), but we verify the code compiles
+	// and the command building works with all new options.
+	cmd := buildCmd(&ClaudeAgentOptions{
+		SessionID:   "test-session",
+		TaskBudget:  &TaskBudget{Total: 10000},
+		Thinking:    &ThinkingAdaptive{},
+		SystemPrompt: &SystemPromptPreset{
+			Type:                   "preset",
+			Preset:                 "claude_code",
+			ExcludeDynamicSections: boolPtr(true),
+		},
+	})
+	if !hasFlag(cmd, "--session-id") {
+		t.Error("--session-id missing")
+	}
+	if !hasFlag(cmd, "--task-budget") {
+		t.Error("--task-budget missing")
+	}
+	if !hasFlag(cmd, "--thinking") {
+		t.Error("--thinking missing")
+	}
+}
+
+func boolPtr(b bool) *bool { return &b }

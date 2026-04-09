@@ -429,3 +429,256 @@ func TestGetSessionMessages_InvalidUUID(t *testing.T) {
 		t.Errorf("expected empty list for invalid UUID, got %d messages", len(msgs))
 	}
 }
+
+// -----------------------------------------------------------------------
+// Session mutations tests
+// -----------------------------------------------------------------------
+
+func setupSessionForMutation(t *testing.T) (string, string) {
+	t.Helper()
+	tmpDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", tmpDir)
+
+	projectDir := filepath.Join(tmpDir, "projects", "-tmp-test")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	sid := "550e8400-e29b-41d4-a716-446655440000"
+	uuid1 := "550e8400-e29b-41d4-a716-446655440001"
+	uuid2 := "550e8400-e29b-41d4-a716-446655440002"
+	lines := []string{
+		`{"type":"user","uuid":"` + uuid1 + `","sessionId":"` + sid + `","timestamp":"2024-01-01T00:00:00Z","cwd":"/tmp/test","message":{"role":"user","content":"hello"}}`,
+		`{"type":"assistant","uuid":"` + uuid2 + `","parentUuid":"` + uuid1 + `","sessionId":"` + sid + `","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]}}`,
+	}
+	fp := filepath.Join(projectDir, sid+".jsonl")
+	if err := os.WriteFile(fp, []byte(strings.Join(lines, "\n")+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return sid, tmpDir
+}
+
+func TestRenameSession(t *testing.T) {
+	sid, _ := setupSessionForMutation(t)
+
+	err := RenameSession(sid, "My Session Title", "")
+	if err != nil {
+		t.Fatalf("RenameSession failed: %v", err)
+	}
+
+	// Verify the title was appended.
+	info, err := GetSessionInfo(sid, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info == nil {
+		t.Fatal("session not found after rename")
+	}
+	if info.CustomTitle != "My Session Title" {
+		t.Errorf("wrong custom title: %q", info.CustomTitle)
+	}
+}
+
+func TestRenameSession_EmptyTitle(t *testing.T) {
+	err := RenameSession("550e8400-e29b-41d4-a716-446655440000", "   ", "")
+	if err == nil {
+		t.Error("expected error for empty title")
+	}
+}
+
+func TestRenameSession_InvalidUUID(t *testing.T) {
+	err := RenameSession("not-a-uuid", "title", "")
+	if err == nil {
+		t.Error("expected error for invalid UUID")
+	}
+}
+
+func TestTagSession(t *testing.T) {
+	sid, _ := setupSessionForMutation(t)
+
+	err := TagSession(sid, "experiment", "")
+	if err != nil {
+		t.Fatalf("TagSession failed: %v", err)
+	}
+
+	info, err := GetSessionInfo(sid, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Tag != "experiment" {
+		t.Errorf("wrong tag: %q", info.Tag)
+	}
+}
+
+func TestTagSession_Clear(t *testing.T) {
+	sid, _ := setupSessionForMutation(t)
+
+	// Set a tag first.
+	_ = TagSession(sid, "test", "")
+	// Clear it.
+	_ = TagSession(sid, "", "")
+
+	info, _ := GetSessionInfo(sid, "")
+	if info.Tag != "" {
+		t.Errorf("expected empty tag after clear, got %q", info.Tag)
+	}
+}
+
+func TestDeleteSession(t *testing.T) {
+	sid, _ := setupSessionForMutation(t)
+
+	err := DeleteSession(sid, "")
+	if err != nil {
+		t.Fatalf("DeleteSession failed: %v", err)
+	}
+
+	// Verify it's gone.
+	info, _ := GetSessionInfo(sid, "")
+	if info != nil {
+		t.Error("session should not exist after delete")
+	}
+}
+
+func TestDeleteSession_NotFound(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", tmpDir)
+	os.MkdirAll(filepath.Join(tmpDir, "projects"), 0755)
+
+	err := DeleteSession("00000000-0000-0000-0000-000000000001", "")
+	if err == nil {
+		t.Error("expected error for non-existent session")
+	}
+}
+
+func TestForkSession(t *testing.T) {
+	sid, _ := setupSessionForMutation(t)
+
+	result, err := ForkSession(sid, "", "", "My Fork")
+	if err != nil {
+		t.Fatalf("ForkSession failed: %v", err)
+	}
+	if result.SessionID == "" {
+		t.Error("expected non-empty session ID")
+	}
+	if result.SessionID == sid {
+		t.Error("fork should have a different session ID")
+	}
+
+	// Verify the forked session exists.
+	info, _ := GetSessionInfo(result.SessionID, "")
+	if info == nil {
+		t.Fatal("forked session not found")
+	}
+	if !strings.Contains(info.CustomTitle, "My Fork") {
+		t.Errorf("wrong fork title: %q", info.CustomTitle)
+	}
+}
+
+func TestForkSession_UpToMessageID(t *testing.T) {
+	sid, _ := setupSessionForMutation(t)
+
+	// Fork up to the first message (user message).
+	result, err := ForkSession(sid, "", "550e8400-e29b-41d4-a716-446655440001", "")
+	if err != nil {
+		t.Fatalf("ForkSession with upToMessageID failed: %v", err)
+	}
+	if result.SessionID == "" {
+		t.Error("expected non-empty session ID")
+	}
+}
+
+func TestForkSession_InvalidUUID(t *testing.T) {
+	_, err := ForkSession("bad-uuid", "", "", "")
+	if err == nil {
+		t.Error("expected error for invalid UUID")
+	}
+}
+
+// -----------------------------------------------------------------------
+// GetSessionInfo tests
+// -----------------------------------------------------------------------
+
+func TestGetSessionInfo_Basic(t *testing.T) {
+	sid, _ := setupSessionForMutation(t)
+
+	info, err := GetSessionInfo(sid, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info == nil {
+		t.Fatal("session not found")
+	}
+	if info.SessionID != sid {
+		t.Errorf("wrong session ID: %q", info.SessionID)
+	}
+	if info.FirstPrompt != "hello" {
+		t.Errorf("wrong first prompt: %q", info.FirstPrompt)
+	}
+}
+
+func TestGetSessionInfo_CreatedAt(t *testing.T) {
+	sid, _ := setupSessionForMutation(t)
+
+	info, _ := GetSessionInfo(sid, "")
+	if info.CreatedAt == nil {
+		t.Error("expected CreatedAt to be set")
+	}
+	if info.CreatedAt != nil && *info.CreatedAt <= 0 {
+		t.Errorf("expected positive CreatedAt, got %d", *info.CreatedAt)
+	}
+}
+
+func TestGetSessionInfo_NotFound(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", tmpDir)
+	os.MkdirAll(filepath.Join(tmpDir, "projects"), 0755)
+
+	info, _ := GetSessionInfo("00000000-0000-0000-0000-000000000001", "")
+	if info != nil {
+		t.Error("expected nil for non-existent session")
+	}
+}
+
+func TestGetSessionInfo_InvalidUUID(t *testing.T) {
+	info, _ := GetSessionInfo("not-a-uuid", "")
+	if info != nil {
+		t.Error("expected nil for invalid UUID")
+	}
+}
+
+// -----------------------------------------------------------------------
+// Unicode sanitization tests
+// -----------------------------------------------------------------------
+
+func TestSanitizeUnicode_Basic(t *testing.T) {
+	// Zero-width characters should be stripped.
+	input := "hello\u200bworld\u200c"
+	got := sanitizeUnicode(input)
+	if got != "helloworld" {
+		t.Errorf("expected 'helloworld', got %q", got)
+	}
+}
+
+func TestSanitizeUnicode_BOM(t *testing.T) {
+	input := "\ufeffhello"
+	got := sanitizeUnicode(input)
+	if got != "hello" {
+		t.Errorf("expected 'hello', got %q", got)
+	}
+}
+
+func TestSanitizeUnicode_PrivateUse(t *testing.T) {
+	input := "test\ue000end"
+	got := sanitizeUnicode(input)
+	if got != "testend" {
+		t.Errorf("expected 'testend', got %q", got)
+	}
+}
+
+func TestSanitizeUnicode_Clean(t *testing.T) {
+	input := "already clean"
+	got := sanitizeUnicode(input)
+	if got != input {
+		t.Errorf("expected %q, got %q", input, got)
+	}
+}

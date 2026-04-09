@@ -200,11 +200,72 @@ opts := &claude.ClaudeAgentOptions{
 
 See [types.go](types.go) for complete type definitions:
 
-- `ClaudeAgentOptions` — Configuration options
-- `AssistantMessage`, `UserMessage`, `SystemMessage`, `ResultMessage` — Message types
+- `ClaudeAgentOptions` — Configuration options (including `SessionID`, `TaskBudget`, `Thinking`)
+- `AssistantMessage`, `UserMessage`, `SystemMessage`, `ResultMessage`, `RateLimitEvent` — Message types
 - `TextBlock`, `ToolUseBlock`, `ToolResultBlock`, `ThinkingBlock` — Content blocks
+- `ContextUsageResponse`, `ContextUsageCategory` — Context window usage
 - `HookMatcher`, `HookEvent`, `HookFunc` — Hook system types
-- `SdkMcpServer`, `SdkMcpTool`, `SdkMcpToolResult` — SDK MCP server types
+- `SdkMcpServer`, `MCPTool`, `ToolResult` — SDK MCP server types
+- `PermissionMode` — `default`, `acceptEdits`, `plan`, `bypassPermissions`, `dontAsk`, `auto`
+
+## Session Management
+
+### Session Mutations (v0.2.0+)
+
+```go
+// Rename a session
+err := claude.RenameSession(sessionID, "My Session", "")
+
+// Tag a session
+err := claude.TagSession(sessionID, "experiment", "")
+
+// Get session info
+info, err := claude.GetSessionInfo(sessionID, "")
+
+// Fork a session
+result, err := claude.ForkSession(sessionID, "", "", "Fork Title")
+
+// Delete a session
+err := claude.DeleteSession(sessionID, "")
+```
+
+### Listing Sessions
+
+```go
+// List sessions for a project
+sessions, err := claude.ListSessions("/path/to/project", true, 10)
+
+// List all sessions
+sessions, err := claude.ListAllSessions(10)
+
+// Get session messages
+msgs, err := claude.GetSessionMessages(sessionID, "", 0, 0)
+```
+
+## Context Usage
+
+```go
+client, _ := claude.NewClaudeSDKClient(ctx, opts)
+defer client.Close()
+
+// After some conversation...
+usage, err := client.GetContextUsage(ctx)
+fmt.Printf("Using %.1f%% of context (%d tokens)\n", usage.Percentage, usage.TotalTokens)
+```
+
+## Rate Limit Events
+
+The SDK emits `RateLimitEvent` messages when rate limit status changes:
+
+```go
+for msg := range client.ReceiveMessages(ctx) {
+    if rl, ok := msg.(*claude.RateLimitEvent); ok {
+        if rl.RateLimitInfo.Status == claude.RateLimitAllowedWarning {
+            log.Println("Approaching rate limit!")
+        }
+    }
+}
+```
 
 ## Error Handling
 
@@ -256,6 +317,17 @@ See [examples/](examples/) for working examples:
 | [tools_option/](examples/tools_option/) | Configuring allowed tools |
 | [max_budget_usd/](examples/max_budget_usd/) | Cost budget limits |
 | [setting_sources/](examples/setting_sources/) | Controlling settings file loading |
+
+### New Features (v0.2.0+)
+
+- **Session mutations**: `RenameSession`, `TagSession`, `DeleteSession`, `ForkSession`
+- **Context usage**: `GetContextUsage()` for context window monitoring
+- **Rate limit events**: `RateLimitEvent` message type for proactive rate limit awareness
+- **Task budget**: `TaskBudget` option for token budget management
+- **Thinking modes**: `--thinking adaptive/disabled` support
+- **Permission modes**: `dontAsk` and `auto` modes
+- **Graceful shutdown**: Automatic wait → SIGTERM → SIGKILL sequence
+- **Exclude dynamic sections**: Cross-user prompt caching support
 
 ## End-to-End Tests
 

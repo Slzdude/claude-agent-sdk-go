@@ -15,12 +15,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
 	defaultMaxBufferSize     = 1024 * 1024
 	minimumClaudeCodeVersion = "2.0.0"
-	sdkVersion               = "0.1.0"
+	sdkVersion               = "0.2.0"
 )
 
 // transport manages the raw subprocess I/O.
@@ -112,6 +113,8 @@ func (t *cliTransport) buildCommand() []string {
 		if sp.Append != "" {
 			cmd = append(cmd, "--append-system-prompt", sp.Append)
 		}
+	case *SystemPromptFile:
+		cmd = append(cmd, "--system-prompt-file", sp.Path)
 	}
 
 	switch tv := opts.Tools.(type) {
@@ -137,6 +140,9 @@ func (t *cliTransport) buildCommand() []string {
 	if len(opts.DisallowedTools) > 0 {
 		cmd = append(cmd, "--disallowedTools", strings.Join(opts.DisallowedTools, ","))
 	}
+	if opts.TaskBudget != nil {
+		cmd = append(cmd, "--task-budget", strconv.Itoa(opts.TaskBudget.Total))
+	}
 	if opts.Model != "" {
 		cmd = append(cmd, "--model", opts.Model)
 	}
@@ -161,6 +167,9 @@ func (t *cliTransport) buildCommand() []string {
 	}
 	if opts.Resume != "" {
 		cmd = append(cmd, "--resume", opts.Resume)
+	}
+	if opts.SessionID != "" {
+		cmd = append(cmd, "--session-id", opts.SessionID)
 	}
 	if opts.ForkSession {
 		cmd = append(cmd, "--fork-session")
@@ -194,15 +203,11 @@ func (t *cliTransport) buildCommand() []string {
 	if opts.IncludePartialMessages {
 		cmd = append(cmd, "--include-partial-messages")
 	}
-	// --setting-sources is always emitted (even when empty) to match Python SDK
-	// behaviour: this tells the CLI exactly which settings tiers to load.
-	{
-		var sourceParts []string
-		if opts.SettingSources != nil {
-			sourceParts = make([]string, len(opts.SettingSources))
-			for i, s := range opts.SettingSources {
-				sourceParts[i] = string(s)
-			}
+	// --setting-sources only when non-empty (Python SDK v0.1.53 fix)
+	if len(opts.SettingSources) > 0 {
+		sourceParts := make([]string, len(opts.SettingSources))
+		for i, s := range opts.SettingSources {
+			sourceParts[i] = string(s)
 		}
 		cmd = append(cmd, "--setting-sources", strings.Join(sourceParts, ","))
 	}
@@ -219,25 +224,18 @@ func (t *cliTransport) buildCommand() []string {
 		}
 	}
 
-	// Thinking
-	resolvedThinking := -1
-	if opts.MaxThinkingTokens != nil {
-		resolvedThinking = *opts.MaxThinkingTokens
-	}
+	// Thinking — use --thinking flag for adaptive/disabled, --max-thinking-tokens for enabled.
 	if opts.Thinking != nil {
-		switch th := opts.Thinking.(type) {
+		switch opts.Thinking.(type) {
 		case *ThinkingAdaptive:
-			if resolvedThinking < 0 {
-				resolvedThinking = 32_000
-			}
+			cmd = append(cmd, "--thinking", "adaptive")
 		case *ThinkingEnabled:
-			resolvedThinking = th.BudgetTokens
+			cmd = append(cmd, "--max-thinking-tokens", strconv.Itoa(opts.Thinking.(*ThinkingEnabled).BudgetTokens))
 		case *ThinkingDisabled:
-			resolvedThinking = 0
+			cmd = append(cmd, "--thinking", "disabled")
 		}
-	}
-	if resolvedThinking >= 0 {
-		cmd = append(cmd, "--max-thinking-tokens", strconv.Itoa(resolvedThinking))
+	} else if opts.MaxThinkingTokens != nil {
+		cmd = append(cmd, "--max-thinking-tokens", strconv.Itoa(*opts.MaxThinkingTokens))
 	}
 	if opts.Effort != "" {
 		cmd = append(cmd, "--effort", string(opts.Effort))
@@ -289,16 +287,25 @@ func (t *cliTransport) connect(ctx context.Context) error {
 	args := t.buildCommand()
 	t.cmd = exec.CommandContext(ctx, args[0], args[1:]...)
 
-	env := os.Environ()
+	// Build environment: inherited (filtered) + user overrides + SDK defaults.
+	// Filter CLAUDECODE so SDK subprocesses don't think they're inside Claude Code.
+	// CLAUDE_CODE_ENTRYPOINT is set AFTER user env so SDK value always wins,
+	// matching Python SDK behavior.
+	var env []string
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, "CLAUDECODE=") {
+			continue
+		}
+		env = append(env, e)
+	}
 	for k, v := range t.opts.Env {
 		env = append(env, k+"="+v)
 	}
-	env = append(env, "CLAUDE_CODE_ENTRYPOINT=sdk-go", "CLAUDE_AGENT_SDK_VERSION="+sdkVersion)
+	// SDK-controlled vars — always set, cannot be overridden by user env.
+	env = append(env, "CLAUDE_CODE_ENTRYPOINT=sdk-go")
+	env = append(env, "CLAUDE_AGENT_SDK_VERSION="+sdkVersion)
 	if t.opts.EnableFileCheckpointing {
 		env = append(env, "CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=true")
-	}
-	if t.opts.IncludePartialMessages {
-		env = appendIfMissing(env, "CLAUDE_CODE_ENABLE_FINE_GRAINED_TOOL_STREAMING=1")
 	}
 	if t.cwd != "" {
 		env = append(env, "PWD="+t.cwd)
@@ -371,6 +378,12 @@ func (t *cliTransport) readMessages(ctx context.Context) <-chan map[string]any {
 			if line == "" {
 				continue
 			}
+			// Skip non-JSON lines (e.g. [SandboxDebug]) when they don't
+			// start with '{' — prevents buffer corruption.
+			if len(line) > 0 && line[0] != '{' {
+				log.Printf("Skipping non-JSON line from CLI stdout: %s", line[:min(len(line), 200)])
+				continue
+			}
 			var msg map[string]any
 			if err := json.Unmarshal([]byte(line), &msg); err != nil {
 				t.setErr(&CLIJSONDecodeError{Line: line, Cause: err})
@@ -430,10 +443,29 @@ func (t *cliTransport) close() error {
 	}
 	t.stdinMu.Unlock()
 
-	// Kill the subprocess under t.mu, independent of stdin writes.
+	// Graceful shutdown: wait for process to exit after stdin EOF.
+	// The subprocess needs time to flush its session file after receiving
+	// EOF on stdin. Without this grace period, SIGTERM can interrupt the
+	// write and cause the last assistant message to be lost.
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.cmd != nil && t.cmd.Process != nil {
+		// Wait up to 5s for natural exit after stdin close.
+		done := make(chan error, 1)
+		go func() { done <- t.cmd.Wait() }()
+		select {
+		case <-done:
+			return nil
+		case <-time.After(5 * time.Second):
+		}
+		// SIGTERM fallback.
+		_ = t.cmd.Process.Signal(os.Interrupt)
+		select {
+		case <-done:
+			return nil
+		case <-time.After(5 * time.Second):
+		}
+		// SIGKILL fallback.
 		_ = t.cmd.Process.Kill()
 		_ = t.cmd.Wait()
 	}

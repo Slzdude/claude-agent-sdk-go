@@ -15,6 +15,64 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
+// GetSessionInfo returns metadata for a single session by ID.
+// Returns nil if not found, is a sidechain, or has no extractable summary.
+func GetSessionInfo(sessionID, directory string) (*SDKSessionInfo, error) {
+	if !validateUUID(sessionID) {
+		return nil, nil
+	}
+	fileName := sessionID + ".jsonl"
+
+	readInfo := func(projectDir, projectPath string) *SDKSessionInfo {
+		lite, err := readSessionLite(filepath.Join(projectDir, fileName))
+		if err != nil {
+			return nil
+		}
+		return parseSessionInfoFromLite(sessionID, lite, projectPath)
+	}
+
+	if directory != "" {
+		canonDir, err := filepath.EvalSymlinks(directory)
+		if err != nil {
+			canonDir = directory
+		}
+		canonDir = normalizeUnicode(canonDir)
+
+		if projectDir := findProjectDir(canonDir); projectDir != "" {
+			if info := readInfo(projectDir, canonDir); info != nil {
+				return info, nil
+			}
+		}
+		for _, wt := range getWorktreePaths(canonDir) {
+			if wt == canonDir {
+				continue
+			}
+			if projectDir := findProjectDir(wt); projectDir != "" {
+				if info := readInfo(projectDir, wt); info != nil {
+					return info, nil
+				}
+			}
+		}
+		return nil, nil
+	}
+
+	projectsDir := getProjectsDir()
+	entries, err := os.ReadDir(projectsDir)
+	if err != nil {
+		return nil, nil
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		projectDir := filepath.Join(projectsDir, e.Name())
+		if info := readInfo(projectDir, ""); info != nil {
+			return info, nil
+		}
+	}
+	return nil, nil
+}
+
 const (
 	liteReadBufSize = 65536
 	maxSanitizedLen = 200
@@ -448,6 +506,97 @@ func validateUUID(s string) bool {
 	return uuidRE.MatchString(s)
 }
 
+// parseSessionInfoFromLite builds SDKSessionInfo from a lite session read.
+// Returns nil for sidechain sessions or metadata-only sessions.
+func parseSessionInfoFromLite(sessionID string, lite *sessionFileInfo, projectPath string) *SDKSessionInfo {
+	head, tail := lite.head, lite.tail
+
+	// Check for sidechain.
+	firstLine := head
+	if nl := strings.IndexByte(firstLine, '\n'); nl >= 0 {
+		firstLine = firstLine[:nl]
+	}
+	if strings.Contains(firstLine, `"isSidechain":true`) || strings.Contains(firstLine, `"isSidechain": true`) {
+		return nil
+	}
+
+	// Title: customTitle > aiTitle > lastPrompt > firstPrompt.
+	customTitle := extractLastJSONStringField(tail, "customTitle")
+	if customTitle == "" {
+		customTitle = extractLastJSONStringField(head, "customTitle")
+	}
+	aiTitle := extractLastJSONStringField(tail, "aiTitle")
+	if aiTitle == "" {
+		aiTitle = extractLastJSONStringField(head, "aiTitle")
+	}
+	firstPrompt := extractFirstPromptFromHead(head)
+	lastPrompt := extractLastJSONStringField(tail, "lastPrompt")
+	summary := customTitle
+	if summary == "" {
+		summary = aiTitle
+	}
+	if summary == "" {
+		summary = lastPrompt
+	}
+	if summary == "" {
+		summary = firstPrompt
+	}
+	if summary == "" {
+		return nil // skip metadata-only sessions
+	}
+
+	gitBranch := extractLastJSONStringField(tail, "gitBranch")
+	if gitBranch == "" {
+		gitBranch = extractJSONStringField(head, "gitBranch")
+	}
+	cwd := extractJSONStringField(head, "cwd")
+	if cwd == "" {
+		cwd = projectPath
+	}
+
+	// Tag extraction — scope to {"type":"tag"} lines.
+	// The last tag entry wins (even if empty string, which means cleared).
+	var tag string
+	foundTag := false
+	for _, line := range strings.Split(tail, "\n") {
+		if strings.HasPrefix(line, `{"type":"tag"`) {
+			tag = extractLastJSONStringField(line, "tag")
+			foundTag = true
+		}
+	}
+	if !foundTag {
+		tag = ""
+	}
+
+	// CreatedAt from first entry's timestamp (epoch ms).
+	var createdAt *int64
+	ts := extractJSONStringField(firstLine, "timestamp")
+	if ts != "" {
+		ts = strings.TrimSuffix(ts, "Z")
+		ts = strings.TrimSuffix(ts, "+00:00")
+		if t, err := time.Parse("2006-01-02T15:04:05.000Z07:00", ts+"Z"); err == nil {
+			ms := t.UnixMilli()
+			createdAt = &ms
+		} else if t, err := time.Parse(time.RFC3339, ts+"Z"); err == nil {
+			ms := t.UnixMilli()
+			createdAt = &ms
+		}
+	}
+
+	return &SDKSessionInfo{
+		SessionID:    sessionID,
+		Summary:      summary,
+		LastModified: lite.mtime,
+		FileSize:     &lite.size,
+		CustomTitle:  customTitle,
+		FirstPrompt:  firstPrompt,
+		GitBranch:    gitBranch,
+		CWD:          cwd,
+		Tag:          tag,
+		CreatedAt:    createdAt,
+	}
+}
+
 // readSessionsFromDir reads .jsonl session files from a project directory.
 func readSessionsFromDir(projectDir string, projectPath string) []SDKSessionInfo {
 	entries, err := os.ReadDir(projectDir)
@@ -472,48 +621,10 @@ func readSessionsFromDir(projectDir string, projectPath string) []SDKSessionInfo
 			continue
 		}
 
-		// Check for sidechain sessions
-		firstLine := info.head
-		if nl := strings.IndexByte(firstLine, '\n'); nl >= 0 {
-			firstLine = firstLine[:nl]
+		sessionInfo := parseSessionInfoFromLite(sessionID, info, projectPath)
+		if sessionInfo != nil {
+			results = append(results, *sessionInfo)
 		}
-		if strings.Contains(firstLine, `"isSidechain":true`) || strings.Contains(firstLine, `"isSidechain": true`) {
-			continue
-		}
-
-		customTitle := extractLastJSONStringField(info.tail, "customTitle")
-		firstPrompt := extractFirstPromptFromHead(info.head)
-		summary := customTitle
-		if summary == "" {
-			summary = extractLastJSONStringField(info.tail, "summary")
-		}
-		if summary == "" {
-			summary = firstPrompt
-		}
-
-		if summary == "" {
-			continue // skip metadata-only sessions
-		}
-
-		gitBranch := extractLastJSONStringField(info.tail, "gitBranch")
-		if gitBranch == "" {
-			gitBranch = extractJSONStringField(info.head, "gitBranch")
-		}
-		cwd := extractJSONStringField(info.head, "cwd")
-		if cwd == "" {
-			cwd = projectPath
-		}
-
-		results = append(results, SDKSessionInfo{
-			SessionID:    sessionID,
-			Summary:      summary,
-			LastModified: info.mtime,
-			FileSize:     info.size,
-			CustomTitle:  customTitle,
-			FirstPrompt:  firstPrompt,
-			GitBranch:    gitBranch,
-			CWD:          cwd,
-		})
 	}
 	return results
 }

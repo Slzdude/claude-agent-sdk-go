@@ -68,6 +68,8 @@ func parseMessage(raw map[string]any) (Message, error) {
 		return parseResultMessage(raw)
 	case "stream_event":
 		return parseStreamEvent(raw)
+	case "rate_limit_event":
+		return parseRateLimitEvent(raw)
 	default:
 		// Forward-compatible: unknown message types are silently skipped.
 		return nil, nil
@@ -108,6 +110,8 @@ func parseUserMessage(raw map[string]any) (*UserMessage, error) {
 func parseAssistantMessage(raw map[string]any) (*AssistantMessage, error) {
 	m := &AssistantMessage{
 		ParentToolUseID: strVal(raw, "parent_tool_use_id"),
+		SessionID:       strVal(raw, "session_id"),
+		UUID:            strVal(raw, "uuid"),
 	}
 	if msg, ok := raw["message"].(map[string]any); ok {
 		blocks, err := parseContentBlocks(contentArr(msg, "content"))
@@ -116,8 +120,13 @@ func parseAssistantMessage(raw map[string]any) (*AssistantMessage, error) {
 		}
 		m.Content = blocks
 		m.Model = strVal(msg, "model")
+		m.MessageID = strVal(msg, "id")
+		m.StopReason = strVal(msg, "stop_reason")
 		if e := strVal(msg, "error"); e != "" {
 			m.Error = AssistantMessageErrorType(e)
+		}
+		if u, ok := msg["usage"].(map[string]any); ok {
+			m.Usage = u
 		}
 	}
 	return m, nil
@@ -129,6 +138,7 @@ func parseResultMessage(raw map[string]any) (*ResultMessage, error) {
 		IsError:    boolVal(raw, "is_error"),
 		SessionID:  strVal(raw, "session_id"),
 		StopReason: strVal(raw, "stop_reason"),
+		UUID:       strVal(raw, "uuid"),
 	}
 	switch cv := raw["result"].(type) {
 	case string:
@@ -152,6 +162,20 @@ func parseResultMessage(raw map[string]any) (*ResultMessage, error) {
 	if so, ok := raw["structured_output"]; ok {
 		m.StructuredOutput = so
 	}
+	if mu, ok := raw["modelUsage"].(map[string]any); ok {
+		m.ModelUsage = mu
+	}
+	if pd, ok := raw["permission_denials"].([]any); ok {
+		m.PermissionDenials = pd
+	}
+	if errs, ok := raw["errors"].([]any); ok {
+		m.Errors = make([]string, 0, len(errs))
+		for _, e := range errs {
+			if s, ok := e.(string); ok {
+				m.Errors = append(m.Errors, s)
+			}
+		}
+	}
 	return m, nil
 }
 
@@ -165,6 +189,44 @@ func parseStreamEvent(raw map[string]any) (*StreamEvent, error) {
 		e.Event = ev
 	}
 	return e, nil
+}
+
+func parseRateLimitEvent(raw map[string]any) (*RateLimitEvent, error) {
+	infoRaw, ok := raw["rate_limit_info"].(map[string]any)
+	if !ok {
+		return nil, &MessageParseError{Message: "missing rate_limit_info", Data: raw}
+	}
+	info := RateLimitInfo{
+		Status: RateLimitStatus(strVal(infoRaw, "status")),
+		Raw:    infoRaw,
+	}
+	if v, ok := infoRaw["resetsAt"].(float64); ok {
+		t := int64(v)
+		info.ResetsAt = &t
+	}
+	if v := strVal(infoRaw, "rateLimitType"); v != "" {
+		rt := RateLimitType(v)
+		info.RateLimitType = &rt
+	}
+	if v, ok := infoRaw["utilization"].(float64); ok {
+		info.Utilization = &v
+	}
+	if v := strVal(infoRaw, "overageStatus"); v != "" {
+		os := RateLimitStatus(v)
+		info.OverageStatus = &os
+	}
+	if v, ok := infoRaw["overageResetsAt"].(float64); ok {
+		t := int64(v)
+		info.OverageResetsAt = &t
+	}
+	if v := strVal(infoRaw, "overageDisabledReason"); v != "" {
+		info.OverageDisabledReason = &v
+	}
+	return &RateLimitEvent{
+		RateLimitInfo: info,
+		UUID:          strVal(raw, "uuid"),
+		SessionID:     strVal(raw, "session_id"),
+	}, nil
 }
 
 func parseContentBlocks(items []any) ([]ContentBlock, error) {

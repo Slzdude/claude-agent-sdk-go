@@ -22,7 +22,7 @@ func TestAgentDefinition(t *testing.T) {
 				Description: "A test agent for verification",
 				Prompt:      "You are a test agent. Always respond with 'Test agent activated'",
 				Tools:       []string{"Read"},
-				Model:       claude.AgentModelSonnet,
+				Model:       "sonnet",
 			},
 		},
 		MaxTurns: 1,

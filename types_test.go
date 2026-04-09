@@ -264,7 +264,7 @@ func TestAgentDefinition(t *testing.T) {
 	def := AgentDefinition{
 		Description: "Does research",
 		Tools:       []string{"Read", "Grep"},
-		Model:       AgentModel("claude-sonnet-4-5"),
+		Model:       "claude-sonnet-4-5",
 	}
 	if def.Description != "Does research" {
 		t.Error("wrong Description")

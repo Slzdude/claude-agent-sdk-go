@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"encoding/json"
 	"testing"
 )
 
@@ -413,5 +414,172 @@ func TestParseUnknownContentBlock(t *testing.T) {
 	// Unknown block type should be silently skipped (forward compat).
 	if len(am.Content) != 1 {
 		t.Errorf("expected 1 block (unknown skipped), got %d", len(am.Content))
+	}
+}
+
+// -----------------------------------------------------------------------
+// Tests for new fields added in Python SDK v0.1.49–v0.1.58
+// -----------------------------------------------------------------------
+
+func TestParseAssistantMessage_NewFields(t *testing.T) {
+	raw := map[string]any{
+		"type":               "assistant",
+		"uuid":               "asst-uuid-1",
+		"session_id":         "sess-1",
+		"parent_tool_use_id": "toolu_abc",
+		"message": map[string]any{
+			"role":        "assistant",
+			"model":       "claude-sonnet-4-20250514",
+			"id":          "msg_123",
+			"stop_reason": "end_turn",
+			"usage": map[string]any{
+				"input_tokens":  float64(100),
+				"output_tokens": float64(50),
+			},
+			"content": []any{
+				map[string]any{"type": "text", "text": "Hello"},
+			},
+		},
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	am := msg.(*AssistantMessage)
+	if am.UUID != "asst-uuid-1" {
+		t.Errorf("wrong UUID: %q", am.UUID)
+	}
+	if am.SessionID != "sess-1" {
+		t.Errorf("wrong SessionID: %q", am.SessionID)
+	}
+	if am.MessageID != "msg_123" {
+		t.Errorf("wrong MessageID: %q", am.MessageID)
+	}
+	if am.StopReason != "end_turn" {
+		t.Errorf("wrong StopReason: %q", am.StopReason)
+	}
+	if am.Usage == nil {
+		t.Fatal("expected Usage to be populated")
+	}
+	if am.Usage["input_tokens"] != float64(100) {
+		t.Errorf("wrong Usage[input_tokens]: %v", am.Usage["input_tokens"])
+	}
+}
+
+func TestParseResultMessage_NewFields(t *testing.T) {
+	raw := map[string]any{
+		"type":        "result",
+		"subtype":     "success",
+		"is_error":    false,
+		"session_id":  "sess-1",
+		"uuid":        "result-uuid-1",
+		"result":      "Done",
+		"duration_ms": float64(1000),
+		"modelUsage": map[string]any{
+			"claude-sonnet-4-20250514": map[string]any{"input_tokens": float64(200)},
+		},
+		"permission_denials": []any{
+			map[string]any{"tool": "Bash", "reason": "dangerous"},
+		},
+		"errors": []any{"error 1", "error 2"},
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rm := msg.(*ResultMessage)
+	if rm.UUID != "result-uuid-1" {
+		t.Errorf("wrong UUID: %q", rm.UUID)
+	}
+	if rm.ModelUsage == nil {
+		t.Fatal("expected ModelUsage to be populated")
+	}
+	if len(rm.PermissionDenials) != 1 {
+		t.Errorf("expected 1 permission denial, got %d", len(rm.PermissionDenials))
+	}
+	if len(rm.Errors) != 2 {
+		t.Errorf("expected 2 errors, got %d", len(rm.Errors))
+	}
+	if rm.Errors[0] != "error 1" {
+		t.Errorf("wrong error[0]: %q", rm.Errors[0])
+	}
+}
+
+func TestParseRateLimitEvent_AllFields(t *testing.T) {
+	raw := map[string]any{
+		"type": "rate_limit_event",
+		"rate_limit_info": map[string]any{
+			"status":                "rejected",
+			"resetsAt":              float64(1700003600),
+			"rateLimitType":         "five_hour",
+			"utilization":           0.95,
+			"overageStatus":         "allowed_warning",
+			"overageResetsAt":       float64(1700007200),
+			"overageDisabledReason": "budget_exceeded",
+		},
+		"uuid":       "rl-uuid-1",
+		"session_id": "sess-1",
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evt := msg.(*RateLimitEvent)
+	if evt.RateLimitInfo.Status != RateLimitRejected {
+		t.Errorf("wrong status: %q", evt.RateLimitInfo.Status)
+	}
+	if evt.RateLimitInfo.RateLimitType == nil || *evt.RateLimitInfo.RateLimitType != RateLimitTypeFiveHour {
+		t.Errorf("wrong rate limit type: %v", evt.RateLimitInfo.RateLimitType)
+	}
+	if evt.RateLimitInfo.Utilization == nil || *evt.RateLimitInfo.Utilization != 0.95 {
+		t.Errorf("wrong utilization: %v", evt.RateLimitInfo.Utilization)
+	}
+	if evt.UUID != "rl-uuid-1" {
+		t.Errorf("wrong UUID: %q", evt.UUID)
+	}
+}
+
+func TestParseRateLimitEvent_MissingInfo(t *testing.T) {
+	raw := map[string]any{
+		"type":       "rate_limit_event",
+		"uuid":       "rl-uuid-2",
+		"session_id": "sess-1",
+	}
+	_, err := parseMessage(raw)
+	if err == nil {
+		t.Error("expected error for missing rate_limit_info")
+	}
+}
+
+func TestAgentDefinition_NewFields(t *testing.T) {
+	maxTurns := 10
+	bg := true
+	mode := PermissionModeDontAsk
+	def := AgentDefinition{
+		Description:     "Agent",
+		Prompt:          "Do stuff",
+		Tools:           []string{"Read"},
+		DisallowedTools: []string{"Bash"},
+		Model:           "claude-sonnet-4-20250514",
+		Skills:          []string{"coding"},
+		Memory:          "user",
+		MaxTurns:        &maxTurns,
+		Background:      &bg,
+		PermissionMode:  &mode,
+	}
+	b, err := json.Marshal(def)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	_ = json.Unmarshal(b, &m)
+	if m["model"] != "claude-sonnet-4-20250514" {
+		t.Errorf("wrong model in JSON: %v", m["model"])
+	}
+	if m["disallowedTools"] == nil {
+		t.Error("expected disallowedTools in JSON")
+	}
+	if m["maxTurns"] != float64(10) {
+		t.Errorf("wrong maxTurns: %v", m["maxTurns"])
 	}
 }

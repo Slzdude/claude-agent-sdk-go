@@ -123,6 +123,9 @@ func NewClaudeSDKClient(ctx context.Context, opts *ClaudeAgentOptions) (*ClaudeS
 	q := newQueryProto(t, &configuredOpts)
 	q.SetSDKMCPServers(servers)
 	q.SetAgents(agentsMap)
+	if sp, ok := configuredOpts.SystemPrompt.(*SystemPromptPreset); ok && sp.ExcludeDynamicSections != nil {
+		q.SetExcludeDynamicSections(sp.ExcludeDynamicSections)
+	}
 
 	client := &ClaudeSDKClient{
 		opts:      &configuredOpts,
@@ -269,6 +272,23 @@ func (c *ClaudeSDKClient) GetMcpStatus(ctx context.Context) (*McpStatusResponse,
 		return nil, fmt.Errorf("failed to parse MCP status response: %w", err)
 	}
 	return &status, nil
+}
+
+// GetContextUsage returns a breakdown of current context window usage by category.
+func (c *ClaudeSDKClient) GetContextUsage(ctx context.Context) (*ContextUsageResponse, error) {
+	if err := c.checkConnected(); err != nil {
+		return nil, err
+	}
+	resp, err := c.proto.GetContextUsage(ctx)
+	if err != nil {
+		return nil, err
+	}
+	b, _ := json.Marshal(resp)
+	var usage ContextUsageResponse
+	if err := json.Unmarshal(b, &usage); err != nil {
+		return nil, fmt.Errorf("failed to parse context usage response: %w", err)
+	}
+	return &usage, nil
 }
 
 // ReconnectMcpServer requests that the CLI reconnect to the named MCP server.

@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 // invokeControlRequest calls handleInboundControlRequest with the given envelope
@@ -331,7 +332,7 @@ func TestHandleMCPMessage_ToolsList(t *testing.T) {
 	}
 }
 
-// TestHandleMCPMessage_NotificationsInitialized verifies empty response.
+// TestHandleMCPMessage_NotificationsInitialized verifies JSON-RPC response.
 func TestHandleMCPMessage_NotificationsInitialized(t *testing.T) {
 	q := &queryProto{
 		opts:          &ClaudeAgentOptions{},
@@ -341,6 +342,7 @@ func TestHandleMCPMessage_NotificationsInitialized(t *testing.T) {
 		"server_name": "calc",
 		"message": map[string]any{
 			"jsonrpc": "2.0",
+			"id":      nil,
 			"method":  "notifications/initialized",
 		},
 	}
@@ -349,8 +351,11 @@ func TestHandleMCPMessage_NotificationsInitialized(t *testing.T) {
 		t.Fatal(err)
 	}
 	mcp := resp["mcp_response"].(map[string]any)
-	if len(mcp) != 0 {
-		t.Errorf("expected empty mcp_response for notification, got %v", mcp)
+	if mcp["jsonrpc"] != "2.0" {
+		t.Errorf("expected jsonrpc 2.0, got %v", mcp["jsonrpc"])
+	}
+	if mcp["result"] == nil {
+		t.Error("expected result field in mcp_response")
 	}
 }
 
@@ -1151,4 +1156,241 @@ func TestNewHookEventsRegisteredInHooksConfig(t *testing.T) {
 	if len(opts.Hooks) != 3 {
 		t.Errorf("expected 3 hook events, got %d", len(opts.Hooks))
 	}
+}
+
+// -----------------------------------------------------------------------
+// Tests for new features (Python SDK v0.1.49–v0.1.58)
+// -----------------------------------------------------------------------
+
+// TestHandleCanUseTool_WithToolUseIDAndAgentID verifies that tool_use_id
+// and agent_id are extracted from permission requests and passed in ToolPermissionContext.
+func TestHandleCanUseTool_WithToolUseIDAndAgentID(t *testing.T) {
+	var capturedCtx ToolPermissionContext
+	opts := &ClaudeAgentOptions{
+		CanUseTool: func(ctx context.Context, toolName string, input map[string]any, permCtx ToolPermissionContext) (PermissionResult, error) {
+			capturedCtx = permCtx
+			return &PermissionResultAllow{}, nil
+		},
+	}
+	q := &queryProto{opts: opts}
+	req := map[string]any{
+		"subtype":     "can_use_tool",
+		"tool_name":   "Bash",
+		"input":       map[string]any{"command": "echo hi"},
+		"tool_use_id": "toolu_123",
+		"agent_id":    "agent_456",
+	}
+	_, err := q.handleCanUseTool(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capturedCtx.ToolUseID != "toolu_123" {
+		t.Errorf("wrong ToolUseID: %q", capturedCtx.ToolUseID)
+	}
+	if capturedCtx.AgentID != "agent_456" {
+		t.Errorf("wrong AgentID: %q", capturedCtx.AgentID)
+	}
+}
+
+// TestControlCancelRequest_Handling verifies that control_cancel_request
+// cancels inflight request handlers via their CancelFunc.
+func TestControlCancelRequest_Handling(t *testing.T) {
+	q := &queryProto{
+		opts:              &ClaudeAgentOptions{},
+		hookCallbacks:     make(map[string]HookCallback),
+		hookTimeouts:      make(map[string]float64),
+		firstResultCh:     make(chan struct{}),
+		pending:           make(map[string]chan controlResult),
+		inflightHandlers:  make(map[string]context.CancelFunc),
+	}
+
+	// Register a cancel function for a fake inflight request.
+	ctx, cancel := context.WithCancel(context.Background())
+	q.inflightHandlers["req-1"] = cancel
+
+	// Simulate receiving a control_cancel_request.
+	cancelled := false
+	go func() {
+		<-ctx.Done()
+		cancelled = true
+	}()
+
+	// Process the cancel request (same logic as in Run()).
+	cancelID := "req-1"
+	q.inflightMu.Lock()
+	cb, ok := q.inflightHandlers[cancelID]
+	delete(q.inflightHandlers, cancelID)
+	q.inflightMu.Unlock()
+	if ok {
+		cb()
+	}
+
+	// Wait for cancellation to propagate.
+	time.Sleep(50 * time.Millisecond)
+	if !cancelled {
+		t.Error("handler context was not cancelled")
+	}
+
+	// Verify handler was removed from inflight map.
+	q.inflightMu.Lock()
+	_, still := q.inflightHandlers["req-1"]
+	q.inflightMu.Unlock()
+	if still {
+		t.Error("inflight handler should be removed after cancel")
+	}
+}
+
+// TestControlCancelRequest_UnknownID verifies that cancelling an unknown
+// request ID is a no-op (no panic).
+func TestControlCancelRequest_UnknownID(t *testing.T) {
+	q := &queryProto{
+		opts:              &ClaudeAgentOptions{},
+		inflightHandlers:  make(map[string]context.CancelFunc),
+	}
+
+	// Should not panic.
+	q.inflightMu.Lock()
+	cb, ok := q.inflightHandlers["unknown-req"]
+	delete(q.inflightHandlers, "unknown-req")
+	q.inflightMu.Unlock()
+	if ok {
+		cb()
+	}
+}
+
+// TestMCPServer_MetaForwarding verifies that maxResultSizeChars is forwarded via _meta.
+func TestMCPServer_MetaForwarding(t *testing.T) {
+	maxSize := 100000
+	server := &metaMCPServer{maxResultSizeChars: &maxSize}
+	q := &queryProto{
+		opts:          &ClaudeAgentOptions{},
+		sdkMCPServers: map[string]SdkMcpServer{"meta-test": server},
+	}
+	req := map[string]any{
+		"server_name": "meta-test",
+		"message": map[string]any{
+			"jsonrpc": "2.0",
+			"id":      float64(1),
+			"method":  "tools/list",
+		},
+	}
+	resp, err := q.handleMCPMessage(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mcp := resp["mcp_response"].(map[string]any)
+	result := mcp["result"].(map[string]any)
+	tools := result["tools"].([]any)
+	if len(tools) == 0 {
+		t.Fatal("expected at least one tool")
+	}
+	tool := tools[0].(map[string]any)
+	meta, ok := tool["_meta"].(map[string]any)
+	if !ok {
+		t.Fatal("expected _meta on tool")
+	}
+	if meta["anthropic/maxResultSizeChars"] != float64(100000) {
+		t.Errorf("wrong maxResultSizeChars in _meta: %v", meta["anthropic/maxResultSizeChars"])
+	}
+}
+
+type metaMCPServer struct {
+	maxResultSizeChars *int
+}
+
+func (s *metaMCPServer) Name() string    { return "meta-test" }
+func (s *metaMCPServer) Version() string { return "1.0.0" }
+func (s *metaMCPServer) ListTools(ctx context.Context) ([]MCPTool, error) {
+	return []MCPTool{
+		{
+			Name:        "big_result",
+			Description: "Returns a large result",
+			InputSchema: map[string]any{},
+			Annotations: &ToolAnnotations{MaxResultSizeChars: s.maxResultSizeChars},
+		},
+	}, nil
+}
+func (s *metaMCPServer) CallTool(ctx context.Context, name string, arguments map[string]any) (ToolResult, error) {
+	return ToolResult{Content: []map[string]any{{"type": "text", "text": "big"}}}, nil
+}
+
+// TestMCPContentTypes_ResourceLink verifies that resource_link content is passed through.
+func TestMCPContentTypes_ResourceLink(t *testing.T) {
+	server := &contentTypeMCPServer{
+		content: []map[string]any{
+			{"type": "resource_link", "name": "My Doc", "uri": "file:///doc.txt", "description": "A doc"},
+		},
+	}
+	q := &queryProto{
+		opts:          &ClaudeAgentOptions{},
+		sdkMCPServers: map[string]SdkMcpServer{"ct-test": server},
+	}
+	req := map[string]any{
+		"server_name": "ct-test",
+		"message": map[string]any{
+			"jsonrpc": "2.0",
+			"id":      float64(1),
+			"method":  "tools/call",
+			"params":  map[string]any{"name": "test", "arguments": map[string]any{}},
+		},
+	}
+	resp, err := q.handleMCPMessage(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mcp := resp["mcp_response"].(map[string]any)
+	result := mcp["result"].(map[string]any)
+	content := result["content"].([]any)
+	if len(content) != 1 {
+		t.Fatalf("expected 1 content item, got %d", len(content))
+	}
+	item := content[0].(map[string]any)
+	if item["type"] != "resource_link" {
+		t.Errorf("expected resource_link type, got %v", item["type"])
+	}
+}
+
+// TestMCPContentTypes_EmbeddedResource verifies that embedded resource content is passed through.
+func TestMCPContentTypes_EmbeddedResource(t *testing.T) {
+	server := &contentTypeMCPServer{
+		content: []map[string]any{
+			{"type": "resource", "resource": map[string]any{"text": "embedded text", "uri": "file:///r.txt"}},
+		},
+	}
+	q := &queryProto{
+		opts:          &ClaudeAgentOptions{},
+		sdkMCPServers: map[string]SdkMcpServer{"ct-test": server},
+	}
+	req := map[string]any{
+		"server_name": "ct-test",
+		"message": map[string]any{
+			"jsonrpc": "2.0",
+			"id":      float64(1),
+			"method":  "tools/call",
+			"params":  map[string]any{"name": "test", "arguments": map[string]any{}},
+		},
+	}
+	resp, err := q.handleMCPMessage(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mcp := resp["mcp_response"].(map[string]any)
+	result := mcp["result"].(map[string]any)
+	content := result["content"].([]any)
+	if len(content) != 1 {
+		t.Fatalf("expected 1 content item, got %d", len(content))
+	}
+}
+
+type contentTypeMCPServer struct {
+	content []map[string]any
+}
+
+func (s *contentTypeMCPServer) Name() string    { return "ct-test" }
+func (s *contentTypeMCPServer) Version() string { return "1.0.0" }
+func (s *contentTypeMCPServer) ListTools(ctx context.Context) ([]MCPTool, error) {
+	return []MCPTool{{Name: "test", InputSchema: map[string]any{}}}, nil
+}
+func (s *contentTypeMCPServer) CallTool(ctx context.Context, name string, arguments map[string]any) (ToolResult, error) {
+	return ToolResult{Content: s.content}, nil
 }

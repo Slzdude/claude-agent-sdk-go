@@ -10,6 +10,8 @@ const (
 	PermissionModeAcceptEdits       PermissionMode = "acceptEdits"
 	PermissionModePlan              PermissionMode = "plan"
 	PermissionModeBypassPermissions PermissionMode = "bypassPermissions"
+	PermissionModeDontAsk           PermissionMode = "dontAsk"
+	PermissionModeAuto              PermissionMode = "auto"
 )
 
 // SdkBeta names feature flags passed to the --betas CLI arg.
@@ -38,22 +40,21 @@ const (
 	EffortMax    EffortLevel = "max"
 )
 
-// AgentModel selects the model variant for a custom agent.
-type AgentModel string
-
-const (
-	AgentModelSonnet  AgentModel = "sonnet"
-	AgentModelOpus    AgentModel = "opus"
-	AgentModelHaiku   AgentModel = "haiku"
-	AgentModelInherit AgentModel = "inherit"
-)
-
 // AgentDefinition describes a custom sub-agent.
 type AgentDefinition struct {
-	Description string     `json:"description"`
-	Prompt      string     `json:"prompt"`
-	Tools       []string   `json:"tools,omitempty"`
-	Model       AgentModel `json:"model,omitempty"`
+	Description     string                  `json:"description"`
+	Prompt          string                  `json:"prompt"`
+	Tools           []string                `json:"tools,omitempty"`
+	DisallowedTools []string                `json:"disallowedTools,omitempty"`
+	Model           string                  `json:"model,omitempty"` // "sonnet", "opus", "haiku", "inherit", or full model ID
+	Skills          []string                `json:"skills,omitempty"`
+	Memory          string                  `json:"memory,omitempty"` // "user", "project", "local"
+	MCPServers      []map[string]any        `json:"mcpServers,omitempty"`
+	InitialPrompt   string                  `json:"initialPrompt,omitempty"`
+	MaxTurns        *int                    `json:"maxTurns,omitempty"`
+	Background      *bool                   `json:"background,omitempty"`
+	Effort          any                     `json:"effort,omitempty"` // string or int
+	PermissionMode  *PermissionMode         `json:"permissionMode,omitempty"`
 }
 
 // -----------------------------------------------------------------------
@@ -111,6 +112,8 @@ type PermissionUpdate struct {
 type ToolPermissionContext struct {
 	Signal      any
 	Suggestions []PermissionUpdate
+	ToolUseID   string // Unique identifier for this specific tool call
+	AgentID     string // Sub-agent ID if running within a sub-agent context
 }
 
 // PermissionResult is implemented by PermissionResultAllow and PermissionResultDeny.
@@ -218,6 +221,11 @@ type AssistantMessage struct {
 	Model           string                    `json:"model"`
 	ParentToolUseID string                    `json:"parent_tool_use_id,omitempty"`
 	Error           AssistantMessageErrorType `json:"error,omitempty"`
+	Usage           map[string]any            `json:"usage,omitempty"`
+	MessageID       string                    `json:"message_id,omitempty"`
+	StopReason      string                    `json:"stop_reason,omitempty"`
+	SessionID       string                    `json:"session_id,omitempty"`
+	UUID            string                    `json:"uuid,omitempty"`
 }
 
 func (m *AssistantMessage) messageType() string { return "assistant" }
@@ -295,6 +303,10 @@ type ResultMessage struct {
 	Usage            map[string]any `json:"usage,omitempty"`
 	Result           string         `json:"result,omitempty"`
 	StructuredOutput any            `json:"structured_output,omitempty"`
+	ModelUsage       map[string]any `json:"model_usage,omitempty"`
+	PermissionDenials []any         `json:"permission_denials,omitempty"`
+	Errors           []string       `json:"errors,omitempty"`
+	UUID             string         `json:"uuid,omitempty"`
 }
 
 func (m *ResultMessage) messageType() string { return "result" }
@@ -308,6 +320,86 @@ type StreamEvent struct {
 }
 
 func (m *StreamEvent) messageType() string { return "stream_event" }
+
+// -----------------------------------------------------------------------
+// Rate limit types
+// -----------------------------------------------------------------------
+
+// RateLimitStatus is the current rate limit state.
+type RateLimitStatus string
+
+const (
+	RateLimitAllowed        RateLimitStatus = "allowed"
+	RateLimitAllowedWarning RateLimitStatus = "allowed_warning"
+	RateLimitRejected       RateLimitStatus = "rejected"
+)
+
+// RateLimitType identifies which rate limit window applies.
+type RateLimitType string
+
+const (
+	RateLimitTypeFiveHour     RateLimitType = "five_hour"
+	RateLimitTypeSevenDay     RateLimitType = "seven_day"
+	RateLimitTypeSevenDayOpus RateLimitType = "seven_day_opus"
+	RateLimitTypeSevenDaySonnet RateLimitType = "seven_day_sonnet"
+	RateLimitTypeOverage      RateLimitType = "overage"
+)
+
+// RateLimitInfo carries rate limit status details.
+type RateLimitInfo struct {
+	Status                RateLimitStatus  `json:"status"`
+	ResetsAt              *int64           `json:"resetsAt,omitempty"`
+	RateLimitType         *RateLimitType   `json:"rateLimitType,omitempty"`
+	Utilization           *float64         `json:"utilization,omitempty"`
+	OverageStatus         *RateLimitStatus `json:"overageStatus,omitempty"`
+	OverageResetsAt       *int64           `json:"overageResetsAt,omitempty"`
+	OverageDisabledReason *string          `json:"overageDisabledReason,omitempty"`
+	Raw                   map[string]any   `json:"raw,omitempty"`
+}
+
+// RateLimitEvent is emitted when rate limit status changes.
+type RateLimitEvent struct {
+	RateLimitInfo RateLimitInfo `json:"rate_limit_info"`
+	UUID          string        `json:"uuid"`
+	SessionID     string        `json:"session_id"`
+}
+
+func (m *RateLimitEvent) messageType() string { return "rate_limit_event" }
+
+// -----------------------------------------------------------------------
+// Context usage types
+// -----------------------------------------------------------------------
+
+// ContextUsageCategory describes a single context usage category.
+type ContextUsageCategory struct {
+	Name       string `json:"name"`
+	Tokens     int    `json:"tokens"`
+	Color      string `json:"color"`
+	IsDeferred *bool  `json:"isDeferred,omitempty"`
+}
+
+// ContextUsageResponse describes the current context window usage.
+type ContextUsageResponse struct {
+	Categories            []ContextUsageCategory `json:"categories"`
+	TotalTokens           int                    `json:"totalTokens"`
+	MaxTokens             int                    `json:"maxTokens"`
+	RawMaxTokens          int                    `json:"rawMaxTokens"`
+	Percentage            float64                `json:"percentage"`
+	Model                 string                 `json:"model"`
+	IsAutoCompactEnabled  bool                   `json:"isAutoCompactEnabled"`
+	MemoryFiles           []map[string]any       `json:"memoryFiles"`
+	MCPTools              []map[string]any       `json:"mcpTools"`
+	Agents                []map[string]any       `json:"agents"`
+	GridRows              [][]map[string]any     `json:"gridRows"`
+	AutoCompactThreshold  *int                   `json:"autoCompactThreshold,omitempty"`
+	DeferredBuiltinTools  []map[string]any       `json:"deferredBuiltinTools,omitempty"`
+	SystemTools           []map[string]any       `json:"systemTools,omitempty"`
+	SystemPromptSections  []map[string]any       `json:"systemPromptSections,omitempty"`
+	SlashCommands         map[string]any         `json:"slashCommands,omitempty"`
+	Skills                map[string]any         `json:"skills,omitempty"`
+	MessageBreakdown      map[string]any         `json:"messageBreakdown,omitempty"`
+	APIUsage              map[string]any         `json:"apiUsage,omitempty"`
+}
 
 // -----------------------------------------------------------------------
 // Thinking and Sandbox config
@@ -340,9 +432,21 @@ type SandboxSettings map[string]any
 
 // SystemPromptPreset selects a built-in system prompt.
 type SystemPromptPreset struct {
-	Type   string `json:"type"`   // "preset"
-	Preset string `json:"preset"` // "claude_code"
-	Append string `json:"append,omitempty"`
+	Type                    string `json:"type"`   // "preset"
+	Preset                  string `json:"preset"` // "claude_code"
+	Append                  string `json:"append,omitempty"`
+	ExcludeDynamicSections  *bool  `json:"excludeDynamicSections,omitempty"`
+}
+
+// SystemPromptFile loads the system prompt from a file.
+type SystemPromptFile struct {
+	Type string `json:"type"` // "file"
+	Path string `json:"path"`
+}
+
+// TaskBudget sets an API-side token budget for the task.
+type TaskBudget struct {
+	Total int `json:"total"`
 }
 
 // ToolsPreset selects a built-in tool set.
@@ -378,8 +482,8 @@ type ClaudeAgentOptions struct {
 	// DisallowedTools is the list of tools to disallow.
 	DisallowedTools []string
 
-	// SystemPrompt is either a plain string or *SystemPromptPreset.
-	SystemPrompt any // nil | string | *SystemPromptPreset
+	// SystemPrompt is either a plain string, *SystemPromptPreset, or *SystemPromptFile.
+	SystemPrompt any // nil | string | *SystemPromptPreset | *SystemPromptFile
 
 	// MCPServers maps server names to their config.
 	// Values may be *MCPStdioServerConfig, *MCPSSEServerConfig,
@@ -398,6 +502,9 @@ type ClaudeAgentOptions struct {
 
 	// Resume specifies a session ID to resume.
 	Resume string
+
+	// SessionID specifies a custom session ID.
+	SessionID string
 
 	// MaxTurns limits the number of conversation turns (0 = unlimited).
 	MaxTurns int
@@ -487,6 +594,9 @@ type ClaudeAgentOptions struct {
 
 	// EnableFileCheckpointing enables file rewind functionality.
 	EnableFileCheckpointing bool
+
+	// TaskBudget sets an API-side token budget for the task.
+	TaskBudget *TaskBudget
 }
 
 // -----------------------------------------------------------------------
@@ -498,11 +608,13 @@ type SDKSessionInfo struct {
 	SessionID    string `json:"session_id"`
 	Summary      string `json:"summary"`
 	LastModified int64  `json:"last_modified"` // milliseconds since epoch
-	FileSize     int64  `json:"file_size"`
+	FileSize     *int64 `json:"file_size,omitempty"`
 	CustomTitle  string `json:"custom_title,omitempty"`
 	FirstPrompt  string `json:"first_prompt,omitempty"`
 	GitBranch    string `json:"git_branch,omitempty"`
 	CWD          string `json:"cwd,omitempty"`
+	Tag          string `json:"tag,omitempty"`
+	CreatedAt    *int64 `json:"created_at,omitempty"` // milliseconds since epoch from first entry timestamp
 }
 
 // SessionMessage is a user or assistant message from a session transcript.
