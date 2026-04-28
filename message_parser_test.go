@@ -635,6 +635,57 @@ func TestParseMirrorErrorMessage(t *testing.T) {
 	}
 }
 
+// TestParseToolResultBlock_ContentArray verifies that a tool_result block whose
+// content is an array is preserved as-is (matching Python which does
+// content=block.get("content") without unwrapping).
+func TestParseToolResultBlock_ContentArray(t *testing.T) {
+	contentArray := []any{
+		map[string]any{"type": "text", "text": "first"},
+		map[string]any{"type": "text", "text": "second"},
+	}
+	raw := map[string]any{
+		"type":        "tool_result",
+		"tool_use_id": "toolu_abc123",
+		"content":     contentArray,
+	}
+	block, err := parseContentBlock(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr, ok := block.(*ToolResultBlock)
+	if !ok {
+		t.Fatalf("expected *ToolResultBlock, got %T", block)
+	}
+	got, ok := tr.Content.([]any)
+	if !ok {
+		t.Fatalf("expected Content to be []any, got %T (%v)", tr.Content, tr.Content)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 content blocks, got %d", len(got))
+	}
+}
+
+// TestParseToolResultBlock_ContentString verifies that a string content is
+// preserved as a string.
+func TestParseToolResultBlock_ContentString(t *testing.T) {
+	raw := map[string]any{
+		"type":        "tool_result",
+		"tool_use_id": "toolu_abc123",
+		"content":     "plain text result",
+	}
+	block, err := parseContentBlock(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr, ok := block.(*ToolResultBlock)
+	if !ok {
+		t.Fatalf("expected *ToolResultBlock, got %T", block)
+	}
+	if tr.Content != "plain text result" {
+		t.Errorf("expected %q, got %v", "plain text result", tr.Content)
+	}
+}
+
 func TestAgentDefinition_NewFields(t *testing.T) {
 	maxTurns := 10
 	bg := true

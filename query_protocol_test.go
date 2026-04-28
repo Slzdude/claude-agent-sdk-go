@@ -1448,3 +1448,31 @@ func TestMcpServerStatus_Typed(t *testing.T) {
 		t.Error("wrong tools/annotations")
 	}
 }
+
+// TestInitializeTimeout_DefaultIs60s verifies that when CLAUDE_CODE_STREAM_CLOSE_TIMEOUT
+// is not set the initialize timeout is at least 60 seconds (minimum enforced).
+func TestInitializeTimeout_DefaultIs60s(t *testing.T) {
+	t.Setenv("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", "")
+	d := initializeTimeout()
+	if d < 60*time.Second {
+		t.Errorf("expected >= 60s, got %v", d)
+	}
+}
+
+// TestInitializeTimeout_EnvVarHonoured verifies that a custom value > 60000ms is used.
+func TestInitializeTimeout_EnvVarHonoured(t *testing.T) {
+	t.Setenv("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", "120000") // 120s
+	d := initializeTimeout()
+	if d != 120*time.Second {
+		t.Errorf("expected 120s, got %v", d)
+	}
+}
+
+// TestInitializeTimeout_MinEnforced verifies that values < 60000ms are clamped to 60s.
+func TestInitializeTimeout_MinEnforced(t *testing.T) {
+	t.Setenv("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", "1000") // 1s — below minimum
+	d := initializeTimeout()
+	if d < 60*time.Second {
+		t.Errorf("expected >= 60s (minimum), got %v", d)
+	}
+}

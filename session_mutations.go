@@ -199,17 +199,24 @@ func ForkSession(sessionID, directory, upToMessageID, title string) (*ForkSessio
 			delete(forked, key)
 		}
 
+		// Update timestamp of the last writable entry (matching Python's _build_fork_lines:
+		// `timestamp = now if i == len(writable) - 1 else original.get("timestamp", now)`).
+		if i == len(writable)-1 {
+			forked["timestamp"] = time.Now().UTC().Format(time.RFC3339Nano)
+		}
+
 		b, _ := json.Marshal(forked)
 		lines = append(lines, string(b))
-		_ = i
 	}
 
-	// Append content-replacement entries.
+	// Append content-replacement entries (with uuid/timestamp matching Python).
 	if len(contentReplacements) > 0 {
 		crEntry := map[string]any{
-			"type":           "content-replacement",
-			"sessionId":      forkedSessionID,
-			"replacements":   contentReplacements,
+			"type":         "content-replacement",
+			"uuid":         newUUID(),
+			"timestamp":    time.Now().UTC().Format(time.RFC3339Nano),
+			"sessionId":    forkedSessionID,
+			"replacements": contentReplacements,
 		}
 		b, _ := json.Marshal(crEntry)
 		lines = append(lines, string(b))
@@ -246,8 +253,8 @@ func ForkSession(sessionID, directory, upToMessageID, title string) (*ForkSessio
 	}
 
 	titleEntry := fmt.Sprintf(
-		`{"type":"custom-title","sessionId":%q,"customTitle":%q}`,
-		forkedSessionID, forkTitle,
+		`{"type":"custom-title","uuid":%q,"timestamp":%q,"sessionId":%q,"customTitle":%q}`,
+		newUUID(), time.Now().UTC().Format(time.RFC3339Nano), forkedSessionID, forkTitle,
 	)
 	lines = append(lines, titleEntry)
 
@@ -505,7 +512,7 @@ func RenameSessionViaStore(store SessionStore, key SessionKey, title string) err
 	entry := SessionStoreEntry{
 		Type:      "custom-title",
 		UUID:      newUUID(),
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
 		Extra:     map[string]any{"customTitle": stripped, "sessionId": key.SessionID},
 	}
 	return store.Append(key, []SessionStoreEntry{entry})
@@ -522,7 +529,7 @@ func TagSessionViaStore(store SessionStore, key SessionKey, tag string) error {
 	entry := SessionStoreEntry{
 		Type:      "tag",
 		UUID:      newUUID(),
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
 		Extra:     map[string]any{"tag": tag, "sessionId": key.SessionID},
 	}
 	return store.Append(key, []SessionStoreEntry{entry})
@@ -533,11 +540,61 @@ func DeleteSessionViaStore(store SessionStore, key SessionKey) error {
 	return store.Delete(key)
 }
 
+// sourceSessionFields are fields that leak source session state and must be stripped during fork.
+var sourceSessionFields = []string{"teamName", "agentName", "slug", "sourceToolAssistantUUID"}
+
 // ForkSessionViaStore forks a session via a SessionStore.
-func ForkSessionViaStore(store SessionStore, sourceKey SessionKey, title string) (*ForkSessionResult, error) {
+// If upToMessageID is non-empty, only entries up to and including that message UUID are included.
+func ForkSessionViaStore(store SessionStore, sourceKey SessionKey, upToMessageID, title string) (*ForkSessionResult, error) {
+	if upToMessageID != "" && !validateUUID(upToMessageID) {
+		return nil, fmt.Errorf("invalid up_to_message_id: %s", upToMessageID)
+	}
+
 	entries, err := store.Load(sourceKey)
 	if err != nil || len(entries) == 0 {
 		return nil, fmt.Errorf("session %s not found in store", sourceKey.SessionID)
+	}
+
+	// Partition into transcript entries and content-replacement records,
+	// matching Python's fork_session_via_store.
+	var mainEntries []SessionStoreEntry
+	var contentReplacements []any
+	for _, e := range entries {
+		if e.Extra != nil {
+			if isSidechain, _ := e.Extra["isSidechain"].(bool); isSidechain {
+				continue
+			}
+		}
+		// Content-replacement records are metadata, not transcript.
+		if e.Type == "content-replacement" {
+			if e.Extra != nil {
+				if sid, _ := e.Extra["sessionId"].(string); sid == sourceKey.SessionID {
+					if reps, ok := e.Extra["replacements"].([]any); ok {
+						contentReplacements = append(contentReplacements, reps...)
+					}
+				}
+			}
+			continue
+		}
+		mainEntries = append(mainEntries, e)
+	}
+	if len(mainEntries) == 0 {
+		return nil, fmt.Errorf("session %s has no messages to fork", sourceKey.SessionID)
+	}
+
+	// Truncate to upToMessageID (inclusive).
+	if upToMessageID != "" {
+		cutoff := -1
+		for i, e := range mainEntries {
+			if e.UUID == upToMessageID {
+				cutoff = i
+				break
+			}
+		}
+		if cutoff == -1 {
+			return nil, fmt.Errorf("message %s not found in session %s", upToMessageID, sourceKey.SessionID)
+		}
+		mainEntries = mainEntries[:cutoff+1]
 	}
 
 	forkedSessionID := newUUID()
@@ -546,19 +603,45 @@ func ForkSessionViaStore(store SessionStore, sourceKey SessionKey, title string)
 		SessionID:  forkedSessionID,
 	}
 
-	// Remap UUIDs.
-	uuidMapping := make(map[string]string, len(entries))
-	for _, e := range entries {
+	// Build UUID index (includes progress entries for parent chain walk).
+	uuidIndex := make(map[string]SessionStoreEntry, len(mainEntries))
+	for _, e := range mainEntries {
+		if e.UUID != "" {
+			uuidIndex[e.UUID] = e
+		}
+	}
+
+	// Remap UUIDs for all entries (including progress, needed for parent resolution).
+	uuidMapping := make(map[string]string, len(mainEntries))
+	for _, e := range mainEntries {
 		if e.UUID != "" {
 			uuidMapping[e.UUID] = newUUID()
 		}
 	}
 
+	// Filter out progress entries from output (keep in index for chain walk).
+	var writable []SessionStoreEntry
+	for _, e := range mainEntries {
+		if e.Type != "progress" {
+			writable = append(writable, e)
+		}
+	}
+	if len(writable) == 0 {
+		return nil, fmt.Errorf("session %s has no messages to fork", sourceKey.SessionID)
+	}
+
 	var forked []SessionStoreEntry
-	for i, e := range entries {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	for i, e := range writable {
+		// Update timestamp of the last writable entry (matching Python's _build_fork_lines:
+		// `timestamp = now if i == len(writable) - 1 else original.get("timestamp", now)`).
+		ts := e.Timestamp
+		if i == len(writable)-1 {
+			ts = now
+		}
 		newEntry := SessionStoreEntry{
 			Type:      e.Type,
-			Timestamp: e.Timestamp,
+			Timestamp: ts,
 		}
 		if e.UUID != "" {
 			newEntry.UUID = uuidMapping[e.UUID]
@@ -569,33 +652,65 @@ func ForkSessionViaStore(store SessionStore, sourceKey SessionKey, title string)
 			for k, v := range e.Extra {
 				extra[k] = v
 			}
+
+			// Remap parentUuid, skipping progress ancestors.
 			if parentUUID, ok := extra["parentUuid"].(string); ok && parentUUID != "" {
-				if mapped, ok := uuidMapping[parentUUID]; ok {
-					extra["parentUuid"] = mapped
+				newParentUUID := resolveNonProgressParent(parentUUID, uuidIndex, uuidMapping)
+				if newParentUUID != "" {
+					extra["parentUuid"] = newParentUUID
 				}
 			}
+
+			// Remap logicalParentUuid.
+			if lp, ok := extra["logicalParentUuid"].(string); ok && lp != "" {
+				if mapped, ok := uuidMapping[lp]; ok {
+					extra["logicalParentUuid"] = mapped
+				}
+			}
+
 			extra["sessionId"] = forkedSessionID
 			extra["isSidechain"] = false
 			extra["forkedFrom"] = map[string]any{
 				"sessionId":   sourceKey.SessionID,
 				"messageUuid": e.UUID,
 			}
+
+			// Remove fields that leak source session state.
+			for _, key := range sourceSessionFields {
+				delete(extra, key)
+			}
+
 			newEntry.Extra = extra
 		}
-		_ = i
 		forked = append(forked, newEntry)
 	}
 
-	// Add custom title.
+	// Append content-replacement entries (matching Python's _build_fork_lines).
+	if len(contentReplacements) > 0 {
+		forked = append(forked, SessionStoreEntry{
+			Type:      "content-replacement",
+			UUID:      newUUID(),
+			Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+			Extra: map[string]any{
+				"sessionId":    forkedSessionID,
+				"replacements": contentReplacements,
+			},
+		})
+	}
+
+	// Derive or use provided title.
 	forkTitle := strings.TrimSpace(title)
 	if forkTitle == "" {
-		forkTitle = "Forked session"
+		forkTitle = deriveTitleFromEntries(entries)
+		if forkTitle == "" {
+			forkTitle = "Forked session"
+		}
+		forkTitle += " (fork)"
 	}
-	forkTitle += " (fork)"
 	forked = append(forked, SessionStoreEntry{
 		Type:      "custom-title",
 		UUID:      newUUID(),
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
 		Extra:     map[string]any{"customTitle": forkTitle, "sessionId": forkedSessionID},
 	})
 
@@ -603,4 +718,67 @@ func ForkSessionViaStore(store SessionStore, sourceKey SessionKey, title string)
 		return nil, err
 	}
 	return &ForkSessionResult{SessionID: forkedSessionID}, nil
+}
+
+// resolveNonProgressParent walks the parentUuid chain, skipping progress entries,
+// and returns the mapped UUID of the first non-progress ancestor.
+func resolveNonProgressParent(parentUUID string, uuidIndex map[string]SessionStoreEntry, uuidMapping map[string]string) string {
+	current := parentUUID
+	for current != "" {
+		parent, ok := uuidIndex[current]
+		if !ok {
+			break
+		}
+		if parent.Type != "progress" {
+			if mapped, ok := uuidMapping[current]; ok {
+				return mapped
+			}
+			break
+		}
+		// Parent is progress — walk further up.
+		if parent.Extra != nil {
+			if p, ok := parent.Extra["parentUuid"].(string); ok && p != "" {
+				current = p
+				continue
+			}
+		}
+		break
+	}
+	return ""
+}
+
+// deriveTitleFromEntries extracts a human-readable title from session store entries.
+// Uses last-occurrence semantics: the last customTitle wins, then last aiTitle,
+// then first user prompt.
+func deriveTitleFromEntries(entries []SessionStoreEntry) string {
+	var lastCustomTitle, lastAiTitle string
+	for _, e := range entries {
+		if e.Extra == nil {
+			continue
+		}
+		if ct, ok := e.Extra["customTitle"].(string); ok && ct != "" {
+			lastCustomTitle = ct
+		}
+		if at, ok := e.Extra["aiTitle"].(string); ok && at != "" {
+			lastAiTitle = at
+		}
+	}
+	if lastCustomTitle != "" {
+		return lastCustomTitle
+	}
+	if lastAiTitle != "" {
+		return lastAiTitle
+	}
+	// Try first user prompt.
+	for _, e := range entries {
+		if e.Extra == nil {
+			continue
+		}
+		if msg, ok := e.Extra["message"].(map[string]any); ok {
+			if content, ok := msg["content"].(string); ok && content != "" {
+				return content
+			}
+		}
+	}
+	return ""
 }

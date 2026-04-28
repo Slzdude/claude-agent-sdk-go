@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ─── sanitizePath ───────────────────────────────────────────────────────────
@@ -226,7 +227,7 @@ func TestListSessions_LimitApplied(t *testing.T) {
 		_ = f.Close()
 	}
 
-	all, err := ListSessions(tmpDir, false, 0)
+	all, err := ListSessions(tmpDir, false, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,12 +237,62 @@ func TestListSessions_LimitApplied(t *testing.T) {
 		t.Skip("no sessions discovered — directory layout may differ")
 	}
 
-	limited, err := ListSessions(tmpDir, false, 1)
+	limited, err := ListSessions(tmpDir, false, 1, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(limited) > 1 {
 		t.Errorf("limit=1 returned %d sessions", len(limited))
+	}
+}
+
+func TestListSessions_OffsetApplied(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", tmpDir)
+
+	// Create a project dir with 3 sessions.
+	projDir := filepath.Join(tmpDir, "projects", "proj0")
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		sid := fmt.Sprintf("cccccccc-0000-0000-0000-00000000000%d", i)
+		f, err := os.Create(filepath.Join(projDir, sid+".jsonl"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := json.Marshal(map[string]any{
+			"type": "user", "uuid": sid,
+			"message": map[string]any{"role": "user", "content": "msg"},
+		})
+		_, _ = fmt.Fprintln(f, string(b))
+		_ = f.Close()
+	}
+
+	all, err := ListSessions(tmpDir, false, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) < 2 {
+		t.Skip("fewer than 2 sessions — skipping offset test")
+	}
+
+	// offset=1 should return one fewer session than offset=0
+	withOffset, err := ListSessions(tmpDir, false, 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(withOffset) != len(all)-1 {
+		t.Errorf("offset=1 should return %d sessions, got %d", len(all)-1, len(withOffset))
+	}
+
+	// offset >= total should return empty
+	empty, err := ListSessions(tmpDir, false, 0, len(all))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("offset=%d (>= total %d) should return empty, got %d", len(all), len(all), len(empty))
 	}
 }
 
@@ -282,7 +333,7 @@ func TestListAllSessions_ReturnsSessionsFromAllProjects(t *testing.T) {
 		_ = f.Close()
 	}
 
-	all, err := ListAllSessions(0)
+	all, err := ListAllSessions(0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,7 +361,7 @@ func TestListAllSessions_LimitApplied(t *testing.T) {
 		_ = f.Close()
 	}
 
-	limited, err := ListAllSessions(1)
+	limited, err := ListAllSessions(1, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -323,12 +374,56 @@ func TestListAllSessions_EmptyProjectsDir(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", tmpDir)
 	// No projects directory at all.
-	all, err := ListAllSessions(0)
+	all, err := ListAllSessions(0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(all) != 0 {
 		t.Errorf("expected empty list, got %d sessions", len(all))
+	}
+}
+
+func TestListAllSessions_OffsetApplied(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", tmpDir)
+
+	for i := 0; i < 3; i++ {
+		projDir := filepath.Join(tmpDir, "projects", fmt.Sprintf("projOffset%d", i))
+		if err := os.MkdirAll(projDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		sid := fmt.Sprintf("dddddddd-0000-0000-0000-%012d", i)
+		f, _ := os.Create(filepath.Join(projDir, sid+".jsonl"))
+		b, _ := json.Marshal(map[string]any{
+			"type": "user", "uuid": sid,
+			"message": map[string]any{"role": "user", "content": "test"},
+		})
+		_, _ = fmt.Fprintln(f, string(b))
+		_ = f.Close()
+	}
+
+	all, err := ListAllSessions(0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) < 2 {
+		t.Skip("fewer than 2 sessions — skipping offset test")
+	}
+
+	withOffset, err := ListAllSessions(0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(withOffset) != len(all)-1 {
+		t.Errorf("offset=1 should return %d sessions, got %d", len(all)-1, len(withOffset))
+	}
+
+	empty, err := ListAllSessions(0, len(all))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("offset=%d should return empty, got %d sessions", len(all), len(empty))
 	}
 }
 
@@ -803,4 +898,412 @@ func (s *testMemoryStore) Delete(key SessionKey) error {
 
 func (s *testMemoryStore) ListSubkeys(projectKey, sessionID string) ([]string, error) {
 	return nil, nil
+}
+
+// ─── testFullKeyStore: store that preserves subpath in the key ──────────────
+
+// testFullKeyStore is an in-memory SessionStore that includes Subpath in the
+// storage key, allowing tests to verify subagent import and list operations.
+type testFullKeyStore struct {
+	data map[string][]SessionStoreEntry
+}
+
+func (s *testFullKeyStore) storeKey(key SessionKey) string {
+	k := key.ProjectKey + "/" + key.SessionID
+	if key.Subpath != "" {
+		k += "/" + key.Subpath
+	}
+	return k
+}
+
+func (s *testFullKeyStore) Append(key SessionKey, entries []SessionStoreEntry) error {
+	k := s.storeKey(key)
+	s.data[k] = append(s.data[k], entries...)
+	return nil
+}
+
+func (s *testFullKeyStore) Load(key SessionKey) ([]SessionStoreEntry, error) {
+	k := s.storeKey(key)
+	return s.data[k], nil
+}
+
+func (s *testFullKeyStore) ListSessions(projectKey string) ([]SessionStoreListEntry, error) {
+	return nil, nil
+}
+
+func (s *testFullKeyStore) ListSessionSummaries(projectKey string) ([]SessionSummaryEntry, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (s *testFullKeyStore) Delete(key SessionKey) error {
+	delete(s.data, s.storeKey(key))
+	return nil
+}
+
+func (s *testFullKeyStore) ListSubkeys(projectKey, sessionID string) ([]string, error) {
+	prefix := projectKey + "/" + sessionID + "/"
+	var result []string
+	for k := range s.data {
+		if strings.HasPrefix(k, prefix) {
+			result = append(result, strings.TrimPrefix(k, prefix))
+		}
+	}
+	return result, nil
+}
+
+// ─── GAP 2: ImportSessionToStore — .meta.json sidecar ───────────────────────
+
+// TestImportSessionToStore_MetaJsonSidecar verifies that .meta.json sidecar
+// files are imported as agent_metadata entries alongside the .jsonl transcript.
+func TestImportSessionToStore_MetaJsonSidecar(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", tmpDir)
+
+	sid := "550e8400-e29b-41d4-a716-446655440000"
+	projectDir := filepath.Join(tmpDir, "projects", "-tmp-test")
+	subagentsDir := filepath.Join(projectDir, sid, "subagents")
+	if err := os.MkdirAll(subagentsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Write main session file so ImportSessionToStore can find it.
+	sessionFile := filepath.Join(projectDir, sid+".jsonl")
+	if err := os.WriteFile(sessionFile, []byte(`{"type":"user","uuid":"u1","message":{"content":"hi"}}`+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	agentID := "550e8400-e29b-41d4-a716-000000000001"
+	// Write a minimal JSONL transcript for the subagent.
+	jsonlPath := filepath.Join(subagentsDir, "agent-"+agentID+".jsonl")
+	if err := os.WriteFile(jsonlPath, []byte(`{"type":"user","uuid":"u2","message":{"content":"hi"}}`+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Write the .meta.json sidecar.
+	metaPath := filepath.Join(subagentsDir, "agent-"+agentID+".meta.json")
+	if err := os.WriteFile(metaPath, []byte(`{"agentType":"subagent","worktreePath":"/tmp/wt"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := &testFullKeyStore{data: make(map[string][]SessionStoreEntry)}
+	if err := ImportSessionToStore(store, sid, "", true); err != nil {
+		t.Fatalf("ImportSessionToStore failed: %v", err)
+	}
+
+	// Load the subagent key from the store.
+	subKey := SessionKey{
+		ProjectKey: "-tmp-test",
+		SessionID:  sid,
+		Subpath:    "subagents/" + agentID,
+	}
+	entries, err := store.Load(subKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var metaEntry *SessionStoreEntry
+	for i := range entries {
+		if entries[i].Type == "agent_metadata" {
+			metaEntry = &entries[i]
+			break
+		}
+	}
+	if metaEntry == nil {
+		t.Fatalf("expected agent_metadata entry from .meta.json sidecar; entries=%d", len(entries))
+	}
+	if at, _ := metaEntry.Extra["agentType"].(string); at != "subagent" {
+		t.Errorf("expected agentType=subagent, got %q", at)
+	}
+	if wp, _ := metaEntry.Extra["worktreePath"].(string); wp != "/tmp/wt" {
+		t.Errorf("expected worktreePath=/tmp/wt, got %q", wp)
+	}
+}
+
+// ─── GAP 3: GetSessionInfoFromStore — full field extraction ─────────────────
+
+// TestGetSessionInfoFromStore_FullFields verifies that GetSessionInfoFromStore
+// returns complete session metadata including gitBranch, tag, cwd, and
+// correctly filters out sidechain sessions.
+func TestGetSessionInfoFromStore_FullFields(t *testing.T) {
+	store := &testMemoryStore{data: make(map[string][]SessionStoreEntry)}
+	key := SessionKey{ProjectKey: "proj", SessionID: "sess-1"}
+
+	if err := store.Append(key, []SessionStoreEntry{
+		{
+			Type:      "user",
+			UUID:      "u1",
+			Timestamp: "2024-06-01T10:00:00.000Z",
+			Extra: map[string]any{
+				"type":      "user",
+				"uuid":      "u1",
+				"timestamp": "2024-06-01T10:00:00.000Z",
+				"cwd":       "/home/user/project",
+				"gitBranch": "feature/my-branch",
+				"message":   map[string]any{"role": "user", "content": "first prompt"},
+			},
+		},
+		{
+			Type:  "tag",
+			UUID:  "t1",
+			Extra: map[string]any{"type": "tag", "uuid": "t1", "tag": "my-tag"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := GetSessionInfoFromStore(store, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info == nil {
+		t.Fatal("expected non-nil session info")
+	}
+	if info.CWD != "/home/user/project" {
+		t.Errorf("expected cwd=/home/user/project, got %q", info.CWD)
+	}
+	if info.GitBranch != "feature/my-branch" {
+		t.Errorf("expected gitBranch=feature/my-branch, got %q", info.GitBranch)
+	}
+	if info.Tag != "my-tag" {
+		t.Errorf("expected tag=my-tag, got %q", info.Tag)
+	}
+	if info.CreatedAt == nil || *info.CreatedAt <= 0 {
+		t.Error("expected non-zero CreatedAt")
+	}
+}
+
+// TestGetSessionInfoFromStore_SidechainFiltered verifies that sidechain sessions
+// are filtered out (matching Python's _parse_session_info_from_lite behaviour).
+func TestGetSessionInfoFromStore_SidechainFiltered(t *testing.T) {
+	store := &testMemoryStore{data: make(map[string][]SessionStoreEntry)}
+	key := SessionKey{ProjectKey: "proj", SessionID: "sess-side"}
+
+	if err := store.Append(key, []SessionStoreEntry{
+		{
+			Type:  "user",
+			UUID:  "u1",
+			Extra: map[string]any{"type": "user", "uuid": "u1", "isSidechain": true, "message": map[string]any{"content": "hi"}},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := GetSessionInfoFromStore(store, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info != nil {
+		t.Error("sidechain session should return nil")
+	}
+}
+
+// ─── GAP 5: ForkSession / ForkSessionViaStore — last-message timestamp ──────
+
+// TestForkSession_LastMessageTimestampUpdated verifies that the last writable
+// entry in a forked session has its timestamp updated to the fork time.
+func TestForkSession_LastMessageTimestampUpdated(t *testing.T) {
+	sid, _ := setupSessionForMutation(t)
+
+	result, err := ForkSession(sid, "", "", "Fork Timestamp Test")
+	if err != nil {
+		t.Fatalf("ForkSession failed: %v", err)
+	}
+
+	// Read the forked JSONL file and find the last non-title entry.
+	info, _ := GetSessionInfo(result.SessionID, "")
+	if info == nil {
+		t.Fatal("forked session not found")
+	}
+
+	// Locate the forked file and check the last non-title/non-content-replacement line.
+	forkedContent, err := readSessionFileContent(result.SessionID, "")
+	if err != nil {
+		t.Fatalf("could not read forked session: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(forkedContent), "\n")
+
+	// Find the last line that is a transcript entry (not custom-title).
+	var lastEntryTimestamp string
+	for i := len(lines) - 1; i >= 0; i-- {
+		var entry map[string]any
+		if json.Unmarshal([]byte(lines[i]), &entry) != nil {
+			continue
+		}
+		if t2, ok := entry["type"].(string); ok && t2 == "custom-title" {
+			continue
+		}
+		if ts, ok := entry["timestamp"].(string); ok {
+			lastEntryTimestamp = ts
+		}
+		break
+	}
+	if lastEntryTimestamp == "" {
+		t.Error("last writable entry has no timestamp")
+		return
+	}
+	// The timestamp should be recent (within last 60 seconds).
+	parsed, err := time.Parse(time.RFC3339Nano, lastEntryTimestamp)
+	if err != nil {
+		t.Errorf("last entry timestamp not parseable: %v", err)
+		return
+	}
+	age := time.Since(parsed)
+	if age > 60*time.Second || age < -5*time.Second {
+		t.Errorf("last entry timestamp not updated: %v (age=%v)", lastEntryTimestamp, age)
+	}
+}
+
+// TestForkSessionViaStore_LastMessageTimestampUpdated verifies that the last
+// writable entry in a store-forked session has its timestamp updated.
+func TestForkSessionViaStore_LastMessageTimestampUpdated(t *testing.T) {
+	store := &testFullKeyStore{data: make(map[string][]SessionStoreEntry)}
+	srcKey := SessionKey{ProjectKey: "proj", SessionID: "550e8400-e29b-41d4-a716-aaaaaaaaaaaa"}
+
+	oldTS := "2020-01-01T00:00:00.000Z"
+	if err := store.Append(srcKey, []SessionStoreEntry{
+		{Type: "user", UUID: "550e8400-e29b-41d4-a716-111111111111", Timestamp: oldTS,
+			Extra: map[string]any{"type": "user", "uuid": "550e8400-e29b-41d4-a716-111111111111", "message": map[string]any{"role": "user", "content": "hello"}}},
+		{Type: "assistant", UUID: "550e8400-e29b-41d4-a716-222222222222", Timestamp: oldTS,
+			Extra: map[string]any{"type": "assistant", "uuid": "550e8400-e29b-41d4-a716-222222222222", "parentUuid": "550e8400-e29b-41d4-a716-111111111111", "message": map[string]any{"content": []any{}}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := ForkSessionViaStore(store, srcKey, "", "Fork TS")
+	if err != nil {
+		t.Fatalf("ForkSessionViaStore failed: %v", err)
+	}
+
+	forkKey := SessionKey{ProjectKey: "proj", SessionID: result.SessionID}
+	entries, err := store.Load(forkKey)
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("forked session not found in store")
+	}
+
+	// Find last non-title/non-content-replacement entry.
+	var lastTS string
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].Type == "custom-title" || entries[i].Type == "content-replacement" {
+			continue
+		}
+		lastTS = entries[i].Timestamp
+		break
+	}
+	if lastTS == "" {
+		t.Fatal("no writable entry found in forked session")
+	}
+	if lastTS == oldTS {
+		t.Errorf("last entry timestamp was not updated; still %q", lastTS)
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, lastTS)
+	if err != nil {
+		t.Errorf("last entry timestamp not parseable as RFC3339Nano: %v", err)
+		return
+	}
+	age := time.Since(parsed)
+	if age > 60*time.Second || age < -5*time.Second {
+		t.Errorf("last entry timestamp not recent: %v (age=%v)", lastTS, age)
+	}
+}
+
+// ─── GAP 6: ListSubagentsFromStore — nested subkey paths ────────────────────
+
+// TestListSubagentsFromStore_NestedPaths verifies that ListSubagentsFromStore
+// correctly handles nested subkey paths like "subagents/workflows/run-1/agent-abc"
+// and returns the correct agent IDs without nesting or duplication.
+func TestListSubagentsFromStore_NestedPaths(t *testing.T) {
+	store := &testFullKeyStore{data: make(map[string][]SessionStoreEntry)}
+
+	projectKey := "proj"
+	sessionID := "550e8400-e29b-41d4-a716-000000000000"
+
+	// Populate subkeys by appending entries with various subpaths.
+	for _, sub := range []struct {
+		subpath string
+		agentID string
+	}{
+		{"subagents/agent-aaa", "aaa"},
+		{"subagents/workflows/run-1/agent-bbb", "bbb"},
+		{"subagents/workflows/run-2/agent-bbb", "bbb"}, // duplicate agent ID
+		{"subagents/agent-ccc", "ccc"},
+		{"other/something", ""}, // non-subagent key — should be ignored
+	} {
+		key := SessionKey{ProjectKey: projectKey, SessionID: sessionID, Subpath: sub.subpath}
+		_ = store.Append(key, []SessionStoreEntry{
+			{Type: "user", UUID: "u1", Extra: map[string]any{"type": "user", "uuid": "u1"}},
+		})
+	}
+
+	result, err := ListSubagentsFromStore(store, projectKey, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gotIDs := make(map[string]bool)
+	for _, sa := range result {
+		gotIDs[sa.AgentID] = true
+	}
+
+	// "aaa", "bbb", "ccc" should be present; "bbb" only once; "other" absent.
+	for _, want := range []string{"aaa", "bbb", "ccc"} {
+		if !gotIDs[want] {
+			t.Errorf("missing agent ID %q in result", want)
+		}
+	}
+	if len(result) != 3 {
+		t.Errorf("expected 3 unique agent IDs, got %d: %v", len(result), result)
+	}
+	// Non-subagent subkey should not appear.
+	for _, sa := range result {
+		if sa.AgentID == "something" || sa.AgentID == "other/something" {
+			t.Errorf("non-subagent key leaked into result: %q", sa.AgentID)
+		}
+	}
+}
+
+// TestGetSessionMessagesFromStore_OffsetExceedsLen verifies that when offset >= len(msgs)
+// an empty result is returned, matching Python's messages[offset:] semantics.
+func TestGetSessionMessagesFromStore_OffsetExceedsLen(t *testing.T) {
+	store := &testMemoryStore{data: make(map[string][]SessionStoreEntry)}
+	key := SessionKey{ProjectKey: "proj", SessionID: "sess-1"}
+	store.Append(key, []SessionStoreEntry{
+		{Type: "user", UUID: "u1", Extra: map[string]any{"message": map[string]any{"role": "user", "content": "hi"}}},
+		{Type: "assistant", UUID: "a1", Extra: map[string]any{"message": map[string]any{"role": "assistant", "content": []any{}}}},
+	})
+
+	// offset == 2 (exactly len): should return empty.
+	msgs, err := GetSessionMessagesFromStore(store, key, 0, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 0 {
+		t.Errorf("expected 0 messages when offset==len, got %d", len(msgs))
+	}
+
+	// offset == 10 (beyond len): should return empty.
+	msgs, err = GetSessionMessagesFromStore(store, key, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 0 {
+		t.Errorf("expected 0 messages when offset>len, got %d", len(msgs))
+	}
+}
+
+// TestGetSubagentMessagesFromStore_OffsetExceedsLen verifies offset boundary for
+// subagent store messages (same Python semantics: messages[offset:] → empty when
+// offset >= len).
+func TestGetSubagentMessagesFromStore_OffsetExceedsLen(t *testing.T) {
+	store := &testMemoryStore{data: make(map[string][]SessionStoreEntry)}
+	key := SessionKey{ProjectKey: "proj", SessionID: "sa-1"}
+	store.Append(key, []SessionStoreEntry{
+		{Type: "user", UUID: "u1", Extra: map[string]any{"message": map[string]any{"role": "user", "content": "q"}}},
+	})
+
+	// offset == 1 (exactly len): should return empty.
+	msgs, err := GetSubagentMessagesFromStore(store, key, 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 0 {
+		t.Errorf("expected 0 messages when offset==len, got %d", len(msgs))
+	}
 }

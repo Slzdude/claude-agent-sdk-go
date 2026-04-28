@@ -80,10 +80,14 @@ func parseSystemMessage(raw map[string]any) (Message, error) {
 	subtype := strVal(raw, "subtype")
 	switch subtype {
 	case "mirror_error":
-		return &MirrorErrorMessage{
+		msg := &MirrorErrorMessage{
 			SystemMessage: SystemMessage{Subtype: subtype, Data: raw},
 			Error:         strVal(raw, "error"),
-		}, nil
+		}
+		if key, ok := raw["key"].(*SessionKey); ok {
+			msg.Key = key
+		}
+		return msg, nil
 	default:
 		return &SystemMessage{
 			Subtype: subtype,
@@ -290,11 +294,9 @@ func parseContentBlock(raw map[string]any) (ContentBlock, error) {
 		case string:
 			tr.Content = cv
 		case []any:
-			if len(cv) > 0 {
-				if obj, ok := cv[0].(map[string]any); ok {
-					tr.Content = strVal(obj, "text")
-				}
-			}
+			// Preserve the full array, matching Python which does
+			// content=block.get("content") without unwrapping.
+			tr.Content = cv
 		}
 		return tr, nil
 	case "server_tool_use":
@@ -348,4 +350,17 @@ func contentArr(m map[string]any, key string) []any {
 		return v
 	}
 	return nil
+}
+
+// parseMirrorErrorMessage constructs a MirrorErrorMessage directly from a raw dict.
+// Used by the batcher callback to inject mirror errors into the message stream.
+func parseMirrorErrorMessage(raw map[string]any) Message {
+	msg := &MirrorErrorMessage{
+		SystemMessage: SystemMessage{Subtype: "mirror_error", Data: raw},
+		Error:         strVal(raw, "error"),
+	}
+	if key, ok := raw["key"].(*SessionKey); ok {
+		msg.Key = key
+	}
+	return msg
 }

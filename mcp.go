@@ -117,20 +117,20 @@ type McpSdkServerConfigStatus struct {
 
 // McpClaudeAIProxyServerConfig describes a Claude AI proxy server in status responses.
 type McpClaudeAIProxyServerConfig struct {
-	Type string `json:"type"` // "claude_ai_proxy"
+	Type string `json:"type"` // "claudeai-proxy"
 	URL  string `json:"url,omitempty"`
 	ID   string `json:"id,omitempty"`
 }
 
 // McpServerStatus represents the connection status of an MCP server.
 type McpServerStatus struct {
-	Name       string                   `json:"name"`
+	Name       string                    `json:"name"`
 	Status     McpServerConnectionStatus `json:"status"`
-	ServerInfo *McpServerInfo           `json:"serverInfo,omitempty"`
-	Config     map[string]any           `json:"config,omitempty"`
-	Error      string                   `json:"error,omitempty"`
-	Scope      string                   `json:"scope,omitempty"`
-	Tools      []McpToolInfo            `json:"tools,omitempty"`
+	ServerInfo *McpServerInfo            `json:"serverInfo,omitempty"`
+	Config     map[string]any            `json:"config,omitempty"`
+	Error      string                    `json:"error,omitempty"`
+	Scope      string                    `json:"scope,omitempty"`
+	Tools      []McpToolInfo             `json:"tools,omitempty"`
 }
 
 // McpStatusResponse is returned by ClaudeSDKClient.GetMcpStatus.

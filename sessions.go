@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
@@ -8,7 +9,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -87,7 +90,8 @@ var (
 
 // ListSessions returns sessions from the given project directory (and worktrees
 // if requested), sorted newest-first. Pass limit <= 0 for no limit.
-func ListSessions(directory string, includeWorktrees bool, limit int) ([]SDKSessionInfo, error) {
+// Pass offset > 0 to skip the first N sessions (after sorting).
+func ListSessions(directory string, includeWorktrees bool, limit int, offset int) ([]SDKSessionInfo, error) {
 	if directory == "" {
 		directory = "."
 	}
@@ -114,6 +118,12 @@ func ListSessions(directory string, includeWorktrees bool, limit int) ([]SDKSess
 	}
 	all = deduplicateSessions(all)
 	sortSessionsByMtime(all)
+	if offset > 0 {
+		if offset >= len(all) {
+			return nil, nil
+		}
+		all = all[offset:]
+	}
 	if limit > 0 && len(all) > limit {
 		all = all[:limit]
 	}
@@ -122,8 +132,9 @@ func ListSessions(directory string, includeWorktrees bool, limit int) ([]SDKSess
 
 // ListAllSessions scans every project directory under ~/.claude/projects/ and
 // returns sessions sorted newest-first. Pass limit<=0 for no limit.
+// Pass offset > 0 to skip the first N sessions (after sorting).
 // This mirrors Python SDK's list_sessions(directory=None) behaviour.
-func ListAllSessions(limit int) ([]SDKSessionInfo, error) {
+func ListAllSessions(limit int, offset int) ([]SDKSessionInfo, error) {
 	projectsDir := getProjectsDir()
 	entries, err := os.ReadDir(projectsDir)
 	if err != nil {
@@ -140,6 +151,12 @@ func ListAllSessions(limit int) ([]SDKSessionInfo, error) {
 	}
 	all = deduplicateSessions(all)
 	sortSessionsByMtime(all)
+	if offset > 0 {
+		if offset >= len(all) {
+			return nil, nil
+		}
+		all = all[offset:]
+	}
 	if limit > 0 && len(all) > limit {
 		all = all[:limit]
 	}
@@ -209,7 +226,8 @@ type SubagentInfo struct {
 }
 
 // ListSubagents returns the subagent IDs for a session.
-// Scans <sessionId>/subagents/agent-*.jsonl files.
+// Recursively scans <sessionId>/subagents/**/agent-*.jsonl files, including
+// nested subdirectories like workflows/<runId>/.
 func ListSubagents(sessionID, directory string) ([]SubagentInfo, error) {
 	if !validateUUID(sessionID) {
 		return nil, nil
@@ -218,21 +236,30 @@ func ListSubagents(sessionID, directory string) ([]SubagentInfo, error) {
 	if dir == "" {
 		return nil, nil
 	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, nil
-	}
 	var result []SubagentInfo
+	collectAgentFiles(dir, &result)
+	return result, nil
+}
+
+// collectAgentFiles recursively collects agent-*.jsonl files from a directory tree.
+func collectAgentFiles(baseDir string, result *[]SubagentInfo) {
+	entries, err := os.ReadDir(baseDir)
+	if err != nil {
+		return
+	}
 	for _, e := range entries {
 		name := e.Name()
-		if !strings.HasSuffix(name, ".jsonl") {
+		fullPath := filepath.Join(baseDir, name)
+		if e.IsDir() {
+			collectAgentFiles(fullPath, result)
 			continue
 		}
-		agentID := strings.TrimSuffix(name, ".jsonl")
-		// Extract agent type from first line if available.
+		if !strings.HasPrefix(name, "agent-") || !strings.HasSuffix(name, ".jsonl") {
+			continue
+		}
+		agentID := strings.TrimPrefix(strings.TrimSuffix(name, ".jsonl"), "agent-")
 		agentType := ""
-		fp := filepath.Join(dir, name)
-		if data, err := os.ReadFile(fp); err == nil {
+		if data, err := os.ReadFile(fullPath); err == nil {
 			lines := strings.SplitN(string(data), "\n", 2)
 			if len(lines) > 0 {
 				var entry map[string]any
@@ -241,16 +268,16 @@ func ListSubagents(sessionID, directory string) ([]SubagentInfo, error) {
 				}
 			}
 		}
-		result = append(result, SubagentInfo{
+		*result = append(*result, SubagentInfo{
 			AgentID:   agentID,
 			AgentType: agentType,
-			FilePath:  fp,
+			FilePath:  fullPath,
 		})
 	}
-	return result, nil
 }
 
 // GetSubagentMessages returns messages from a subagent's transcript.
+// Searches nested subdirectories (e.g. workflows/<runId>/) to find the agent file.
 func GetSubagentMessages(sessionID, agentID, directory string, limit, offset int) ([]SessionMessage, error) {
 	if !validateUUID(sessionID) {
 		return nil, nil
@@ -259,8 +286,22 @@ func GetSubagentMessages(sessionID, agentID, directory string, limit, offset int
 	if dir == "" {
 		return nil, nil
 	}
-	fp := filepath.Join(dir, agentID+".jsonl")
-	data, err := os.ReadFile(fp)
+
+	// Search for the agent file recursively (matches Python's _collect_agent_files).
+	var agentFilePath string
+	var agents []SubagentInfo
+	collectAgentFiles(dir, &agents)
+	for _, a := range agents {
+		if a.AgentID == agentID {
+			agentFilePath = a.FilePath
+			break
+		}
+	}
+	if agentFilePath == "" {
+		return nil, nil
+	}
+
+	data, err := os.ReadFile(agentFilePath)
 	if err != nil {
 		return nil, nil
 	}
@@ -274,7 +315,10 @@ func GetSubagentMessages(sessionID, agentID, directory string, limit, offset int
 		}
 		msgs = append(msgs, transcriptEntryToSessionMessage(e))
 	}
-	if offset > 0 && offset < len(msgs) {
+	if offset > 0 {
+		if offset >= len(msgs) {
+			return nil, nil
+		}
 		msgs = msgs[offset:]
 	}
 	if limit > 0 && len(msgs) > limit {
@@ -387,75 +431,207 @@ func buildSubagentChain(entries []map[string]any) []map[string]any {
 
 // Store-backed session operations ----------------------------------------------------------------
 
+// storeListLoadConcurrency is the upper bound on concurrent store.Load() calls
+// in ListSessionsFromStore. Prevents exhausting adapter connection pools.
+const storeListLoadConcurrency = 16
+
 // ListSessionsFromStore lists sessions from a SessionStore.
-// If the store implements ListSessionSummaries, uses the summary-backed fast path.
-func ListSessionsFromStore(store SessionStore, projectKey string, limit int) ([]SDKSessionInfo, error) {
-	// Try summary-backed fast path first.
-	if summaries, err := store.ListSessionSummaries(projectKey); err == nil && len(summaries) > 0 {
-		var results []SDKSessionInfo
+// Supports offset pagination and gap-fill with stale sidecar detection,
+// matching Python SDK's list_sessions_from_store.
+func ListSessionsFromStore(store SessionStore, projectKey string, limit, offset int) ([]SDKSessionInfo, error) {
+	// Try summary-backed fast path with gap-fill.
+	if summaries, err := store.ListSessionSummaries(projectKey); err == nil {
+		// Also call list_sessions for gap-fill (stale sidecar detection).
+		var listing []SessionStoreListEntry
+		knownMtimes := make(map[string]int64)
+		if ls, lsErr := store.ListSessions(projectKey); lsErr == nil {
+			listing = ls
+			for _, e := range ls {
+				knownMtimes[e.SessionID] = e.Mtime
+			}
+		}
+
+		type slot struct {
+			mtime int64
+			info  *SDKSessionInfo
+			sid   string
+		}
+		var slots []slot
+		freshIDs := make(map[string]bool)
+
 		for _, s := range summaries {
-			results = append(results, SDKSessionInfo{
-				SessionID:    s.SessionID,
-				Summary:      strVal(s.Data, "summary"),
-				LastModified: s.Mtime,
-				CustomTitle:  strVal(s.Data, "customTitle"),
-				FirstPrompt:  strVal(s.Data, "firstPrompt"),
-			})
+			sid := s.SessionID
+			if len(listing) > 0 {
+				known, exists := knownMtimes[sid]
+				if !exists {
+					// Summary for a session list_sessions no longer reports — drop.
+					continue
+				}
+				if s.Mtime < known {
+					// Stale sidecar — let gap-fill re-fold from source.
+					continue
+				}
+			}
+			info := summaryEntryToSDKInfo(s, "")
+			if info == nil {
+				freshIDs[sid] = true
+				continue
+			}
+			slots = append(slots, slot{mtime: s.Mtime, info: info, sid: sid})
+			freshIDs[sid] = true
 		}
+
+		// Add placeholder slots for sessions missing from summaries (gap-fill).
+		if len(listing) > 0 {
+			for _, e := range listing {
+				if !freshIDs[e.SessionID] {
+					slots = append(slots, slot{mtime: e.Mtime, sid: e.SessionID})
+				}
+			}
+		}
+
+		// Sort by mtime descending, then apply offset/limit BEFORE loading.
+		sort.Slice(slots, func(i, j int) bool {
+			return slots[i].mtime > slots[j].mtime
+		})
+		page := slots
+		if offset > 0 && offset < len(page) {
+			page = page[offset:]
+		} else if offset >= len(page) {
+			page = nil
+		}
+		if limit > 0 && len(page) > limit {
+			page = page[:limit]
+		}
+
+		// Load gap-fill sessions concurrently with bounded parallelism.
+		results := make([]SDKSessionInfo, 0, len(page))
+		var mu sync.Mutex
+		sem := make(chan struct{}, storeListLoadConcurrency)
+		var wg sync.WaitGroup
+
+		for _, sl := range page {
+			if sl.info != nil {
+				results = append(results, *sl.info)
+				continue
+			}
+			// Gap-fill: load from store.
+			wg.Add(1)
+			go func(sid string, mtime int64) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+
+				storeEntries, err := store.Load(SessionKey{ProjectKey: projectKey, SessionID: sid})
+				if err != nil || len(storeEntries) == 0 {
+					return
+				}
+				info := extractSessionInfoFromStoreEntries(sid, storeEntries, mtime)
+				if info != nil {
+					mu.Lock()
+					results = append(results, *info)
+					mu.Unlock()
+				}
+			}(sl.sid, sl.mtime)
+		}
+		wg.Wait()
+
 		sortSessionsByMtime(results)
-		if limit > 0 && len(results) > limit {
-			results = results[:limit]
-		}
 		return results, nil
 	}
-	// Fallback to list_sessions + per-session load.
+
+	// Fallback to list_sessions + per-session load with bounded concurrency.
 	entries, err := store.ListSessions(projectKey)
 	if err != nil {
 		return nil, err
 	}
-	var results []SDKSessionInfo
-	for _, e := range entries {
-		storeEntries, err := store.Load(SessionKey{ProjectKey: projectKey, SessionID: e.SessionID})
-		if err != nil || len(storeEntries) == 0 {
-			continue
-		}
-		// Extract metadata from entries.
-		info := extractSessionInfoFromStoreEntries(e.SessionID, storeEntries, e.Mtime)
-		if info != nil {
-			results = append(results, *info)
-		}
+
+	// Apply offset/limit before loading.
+	page := entries
+	if offset > 0 && offset < len(page) {
+		page = page[offset:]
+	} else if offset >= len(page) {
+		return nil, nil
 	}
+	if limit > 0 && len(page) > limit {
+		page = page[:limit]
+	}
+
+	results := make([]SDKSessionInfo, 0, len(page))
+	var mu sync.Mutex
+	sem := make(chan struct{}, storeListLoadConcurrency)
+	var wg sync.WaitGroup
+
+	for _, e := range page {
+		wg.Add(1)
+		go func(e SessionStoreListEntry) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			storeEntries, err := store.Load(SessionKey{ProjectKey: projectKey, SessionID: e.SessionID})
+			if err != nil || len(storeEntries) == 0 {
+				return
+			}
+			info := extractSessionInfoFromStoreEntries(e.SessionID, storeEntries, e.Mtime)
+			if info != nil {
+				mu.Lock()
+				results = append(results, *info)
+				mu.Unlock()
+			}
+		}(e)
+	}
+	wg.Wait()
+
 	sortSessionsByMtime(results)
-	if limit > 0 && len(results) > limit {
-		results = results[:limit]
-	}
 	return results, nil
 }
 
-func extractSessionInfoFromStoreEntries(sessionID string, entries []SessionStoreEntry, mtime int64) *SDKSessionInfo {
-	if len(entries) == 0 {
+// summaryEntryToSDKInfo converts a SessionSummaryEntry to SDKSessionInfo.
+// projectPath is used as a fallback for cwd when the summary doesn't have one.
+// Returns nil if the summary indicates a sidechain or empty session.
+// Matches Python SDK's summary_entry_to_sdk_info exactly.
+func summaryEntryToSDKInfo(s SessionSummaryEntry, projectPath string) *SDKSessionInfo {
+	if s.Data == nil {
 		return nil
 	}
-	var summary, customTitle, firstPrompt string
-	for _, e := range entries {
-		if e.Extra != nil {
-			if ct, ok := e.Extra["customTitle"].(string); ok && ct != "" {
-				customTitle = ct
-			}
-			if s, ok := e.Extra["summary"].(string); ok && s != "" {
-				summary = s
-			}
-		}
-		if firstPrompt == "" && e.Extra != nil {
-			if msg, ok := e.Extra["message"].(map[string]any); ok {
-				if content, ok := msg["content"].(string); ok && content != "" {
-					firstPrompt = content
-				}
-			}
+	if s.Data["is_sidechain"] == true {
+		return nil
+	}
+
+	// Resolve first_prompt: only use if locked (matching Python's
+	// first_prompt_locked check), otherwise fall back to command_fallback.
+	var firstPrompt string
+	if s.Data["first_prompt_locked"] == true {
+		if fp, ok := s.Data["first_prompt"].(string); ok {
+			firstPrompt = fp
 		}
 	}
-	if customTitle != "" {
-		summary = customTitle
+	if firstPrompt == "" {
+		if fb, ok := s.Data["command_fallback"].(string); ok && fb != "" {
+			firstPrompt = fb
+		}
+	}
+
+	// Resolve custom_title (custom_title || ai_title).
+	customTitle := ""
+	if ct, ok := s.Data["custom_title"].(string); ok && ct != "" {
+		customTitle = ct
+	} else if at, ok := s.Data["ai_title"].(string); ok && at != "" {
+		customTitle = at
+	}
+
+	// Resolve summary (custom_title || last_prompt || summary_hint || first_prompt).
+	summary := customTitle
+	if summary == "" {
+		if lp, ok := s.Data["last_prompt"].(string); ok && lp != "" {
+			summary = lp
+		}
+	}
+	if summary == "" {
+		if sh, ok := s.Data["summary_hint"].(string); ok && sh != "" {
+			summary = sh
+		}
 	}
 	if summary == "" {
 		summary = firstPrompt
@@ -463,13 +639,101 @@ func extractSessionInfoFromStoreEntries(sessionID string, entries []SessionStore
 	if summary == "" {
 		return nil
 	}
-	return &SDKSessionInfo{
-		SessionID:    sessionID,
+
+	info := &SDKSessionInfo{
+		SessionID:    s.SessionID,
 		Summary:      summary,
-		LastModified: mtime,
+		LastModified: s.Mtime,
 		CustomTitle:  customTitle,
 		FirstPrompt:  firstPrompt,
 	}
+	if tag, ok := s.Data["tag"].(string); ok && tag != "" {
+		info.Tag = tag
+	}
+	if ca, ok := s.Data["created_at"].(int64); ok && ca > 0 {
+		info.CreatedAt = &ca
+	}
+	if gb, ok := s.Data["git_branch"].(string); ok && gb != "" {
+		info.GitBranch = gb
+	}
+	// cwd: summary value wins, then projectPath fallback (matching Python).
+	if cwd, ok := s.Data["cwd"].(string); ok && cwd != "" {
+		info.CWD = cwd
+	} else if projectPath != "" {
+		info.CWD = projectPath
+	}
+	return info
+}
+
+func extractSessionInfoFromStoreEntries(sessionID string, entries []SessionStoreEntry, mtime int64) *SDKSessionInfo {
+	if len(entries) == 0 {
+		return nil
+	}
+	// Serialize entries to JSONL, then call the same parser as the disk path.
+	// Matches Python's get_session_info_from_store which does:
+	//   lines = [json.dumps(e) for e in entries]
+	//   return _parse_session_info_from_lite(session_id, _build_lite_from_content("\n".join(lines)))
+	//
+	// IMPORTANT: parseSessionInfoFromLite matches patterns like `{"type":"tag"` anchored at
+	// the start of a line, so we must put "type" first in the serialized JSON.
+	var sb strings.Builder
+	for _, e := range entries {
+		// Serialize remaining fields (excluding type/uuid/timestamp — handled separately).
+		rest := make(map[string]any, len(e.Extra))
+		for k, v := range e.Extra {
+			if k != "type" && k != "uuid" && k != "timestamp" {
+				rest[k] = v
+			}
+		}
+		restB, err := json.Marshal(rest)
+		if err != nil {
+			continue
+		}
+		// Build JSON with "type" first, then optionally uuid/timestamp, then rest.
+		// This ensures parseSessionInfoFromLite's line-prefix checks work correctly.
+		sb.WriteByte('{')
+		sb.WriteString(`"type":`)
+		typeB, _ := json.Marshal(e.Type)
+		sb.Write(typeB)
+		if e.UUID != "" {
+			sb.WriteString(`,"uuid":`)
+			uuidB, _ := json.Marshal(e.UUID)
+			sb.Write(uuidB)
+		}
+		if e.Timestamp != "" {
+			sb.WriteString(`,"timestamp":`)
+			tsB, _ := json.Marshal(e.Timestamp)
+			sb.Write(tsB)
+		}
+		// Append remaining fields from rest (strip leading '{').
+		if len(restB) > 2 { // not empty {}
+			sb.WriteByte(',')
+			sb.Write(restB[1 : len(restB)-1]) // strip outer braces
+		}
+		sb.WriteByte('}')
+		sb.WriteByte('\n')
+	}
+	content := sb.String()
+	if content == "" {
+		return nil
+	}
+	lite := sessionFileInfoFromContent(content, mtime, int64(len(content)))
+	return parseSessionInfoFromLite(sessionID, lite, "")
+}
+
+// sessionFileInfoFromContent builds a sessionFileInfo from an in-memory JSONL
+// string (e.g. serialized store entries), using the same head/tail logic as
+// readSessionLite. Used by extractSessionInfoFromStoreEntries.
+func sessionFileInfoFromContent(content string, mtime, size int64) *sessionFileInfo {
+	head := content
+	if len(head) > liteReadBufSize {
+		head = head[:liteReadBufSize]
+	}
+	tail := content
+	if len(tail) > liteReadBufSize {
+		tail = tail[len(tail)-liteReadBufSize:]
+	}
+	return &sessionFileInfo{mtime: mtime, size: size, head: head, tail: tail}
 }
 
 // GetSessionMessagesFromStore loads session messages from a SessionStore.
@@ -478,9 +742,13 @@ func GetSessionMessagesFromStore(store SessionStore, key SessionKey, limit, offs
 	if err != nil || len(entries) == 0 {
 		return nil, nil
 	}
-	// Convert store entries to transcript format for chain building.
+	// Convert store entries to transcript format, filtering by type+uuid
+	// (matching Python's _filter_transcript_entries).
 	var transcript []map[string]any
 	for _, e := range entries {
+		if !transcriptEntryTypes[e.Type] || e.UUID == "" {
+			continue
+		}
 		m := map[string]any{
 			"type": e.Type,
 			"uuid": e.UUID,
@@ -498,7 +766,10 @@ func GetSessionMessagesFromStore(store SessionStore, key SessionKey, limit, offs
 		}
 		msgs = append(msgs, transcriptEntryToSessionMessage(e))
 	}
-	if offset > 0 && offset < len(msgs) {
+	if offset > 0 {
+		if offset >= len(msgs) {
+			return nil, nil
+		}
 		msgs = msgs[offset:]
 	}
 	if limit > 0 && len(msgs) > limit {
@@ -524,20 +795,30 @@ func ListSubagentsFromStore(store SessionStore, projectKey, sessionID string) ([
 		return nil, err
 	}
 	var result []SubagentInfo
+	seen := make(map[string]bool)
 	for _, sub := range subkeys {
-		// subkeys are like "subagents/agent-{id}"
-		parts := strings.SplitN(sub, "/", 2)
-		agentID := sub
-		if len(parts) == 2 {
-			agentID = parts[1]
+		// Only consider subagent keys (matching Python's "subagents/" prefix filter).
+		if !strings.HasPrefix(sub, "subagents/") {
+			continue
 		}
-		agentID = strings.TrimPrefix(agentID, "agent-")
+		// Get last path component — handles nested paths like
+		// "subagents/workflows/run-1/agent-abc" (matches Python's rsplit("/",1)[-1]).
+		last := sub[strings.LastIndex(sub, "/")+1:]
+		if !strings.HasPrefix(last, "agent-") {
+			continue
+		}
+		agentID := strings.TrimPrefix(last, "agent-")
+		if seen[agentID] {
+			continue
+		}
+		seen[agentID] = true
 		result = append(result, SubagentInfo{AgentID: agentID})
 	}
 	return result, nil
 }
 
 // GetSubagentMessagesFromStore loads subagent messages from a SessionStore.
+// Filters out agent_metadata entries (matching Python's explicit filter).
 func GetSubagentMessagesFromStore(store SessionStore, key SessionKey, limit, offset int) ([]SessionMessage, error) {
 	entries, err := store.Load(key)
 	if err != nil || len(entries) == 0 {
@@ -545,6 +826,14 @@ func GetSubagentMessagesFromStore(store SessionStore, key SessionKey, limit, off
 	}
 	var transcript []map[string]any
 	for _, e := range entries {
+		// Filter out agent_metadata entries (synthetic metadata from mirror hook).
+		if e.Type == "agent_metadata" {
+			continue
+		}
+		// Filter by type+uuid (matching Python's _filter_transcript_entries).
+		if !transcriptEntryTypes[e.Type] || e.UUID == "" {
+			continue
+		}
 		m := map[string]any{"type": e.Type, "uuid": e.UUID}
 		for k, v := range e.Extra {
 			m[k] = v
@@ -560,7 +849,10 @@ func GetSubagentMessagesFromStore(store SessionStore, key SessionKey, limit, off
 		}
 		msgs = append(msgs, transcriptEntryToSessionMessage(e))
 	}
-	if offset > 0 && offset < len(msgs) {
+	if offset > 0 {
+		if offset >= len(msgs) {
+			return nil, nil
+		}
 		msgs = msgs[offset:]
 	}
 	if limit > 0 && len(msgs) > limit {
@@ -569,17 +861,37 @@ func GetSubagentMessagesFromStore(store SessionStore, key SessionKey, limit, off
 	return msgs, nil
 }
 
+// foldLastWinsFields maps JSONL entry keys → summary data keys.
+var foldLastWinsFields = map[string]string{
+	"customTitle": "custom_title",
+	"aiTitle":     "ai_title",
+	"lastPrompt":  "last_prompt",
+	"summary":     "summary_hint",
+	"gitBranch":   "git_branch",
+}
+
+// skipFirstPromptRe matches auto-generated patterns that should not be used as first_prompt.
+var skipFirstPromptRe = regexp.MustCompile(
+	`^(?:<local-command-stdout>|<session-start-hook>|<tick>|<goal>|` +
+		`\[Request interrupted by user[^\]]*\]|` +
+		`\s*<ide_opened_file>[\s\S]*</ide_opened_file>\s*$|` +
+		`\s*<ide_selection>[\s\S]*</ide_selection>\s*$)`,
+)
+
+// commandNameRe matches slash-command names in user messages.
+var commandNameRe = regexp.MustCompile(`<command-name>(.*?)</command-name>`)
+
 // FoldSessionSummary incrementally derives session metadata from entries.
 // Stores can call this inside Append() to maintain a SessionSummaryEntry sidecar.
 // The prev parameter is the previous summary (nil for first call).
+// mtime is NOT set by the fold — the adapter stamps it after persisting.
 // Returns the updated summary.
-func FoldSessionSummary(prev *SessionSummaryEntry, key SessionKey, entries []SessionStoreEntry, mtime int64) *SessionSummaryEntry {
+func FoldSessionSummary(prev *SessionSummaryEntry, key SessionKey, entries []SessionStoreEntry) *SessionSummaryEntry {
 	if len(entries) == 0 {
 		return prev
 	}
 	var s *SessionSummaryEntry
 	if prev != nil {
-		// Copy to avoid mutating the caller's value.
 		cp := *prev
 		cp.Data = make(map[string]any, len(prev.Data))
 		for k, v := range prev.Data {
@@ -592,58 +904,264 @@ func FoldSessionSummary(prev *SessionSummaryEntry, key SessionKey, entries []Ses
 			Data:      make(map[string]any),
 		}
 	}
-	if mtime > 0 {
-		s.Mtime = mtime
-	}
+
 	for _, e := range entries {
 		if e.Extra == nil {
 			continue
 		}
-		// Last-wins string fields.
-		for _, field := range []string{"customTitle", "aiTitle", "summary", "lastPrompt", "gitBranch", "cwd"} {
-			if v, ok := e.Extra[field].(string); ok && v != "" {
-				s.Data[field] = v
-			}
+		// Set-once: is_sidechain.
+		if _, has := s.Data["is_sidechain"]; !has {
+			s.Data["is_sidechain"] = e.Extra["isSidechain"] == true
 		}
-		// First-prompt (set-once).
-		if _, has := s.Data["firstPrompt"]; !has {
-			if msg, ok := e.Extra["message"].(map[string]any); ok {
-				if content, ok := msg["content"].(string); ok && content != "" {
-					s.Data["firstPrompt"] = content
+		// Set-once: created_at (first parseable ISO timestamp → epoch ms).
+		if _, has := s.Data["created_at"]; !has {
+			if ts, ok := e.Extra["timestamp"].(string); ok && ts != "" {
+				if ms := isoToEpochMs(ts); ms > 0 {
+					s.Data["created_at"] = ms
 				}
 			}
 		}
+		// Set-once: cwd (first non-empty).
+		if _, has := s.Data["cwd"]; !has {
+			if cwd, ok := e.Extra["cwd"].(string); ok && cwd != "" {
+				s.Data["cwd"] = cwd
+			}
+		}
+
+		// First-prompt extraction with filtering.
+		foldFirstPrompt(s.Data, e)
+
+		// Last-wins fields with key mapping.
+		for src, dst := range foldLastWinsFields {
+			if v, ok := e.Extra[src].(string); ok && v != "" {
+				s.Data[dst] = v
+			}
+		}
+
 		// Tag (last-wins, empty means cleared).
 		if e.Type == "tag" {
-			if tag, ok := e.Extra["tag"].(string); ok {
+			if tag, ok := e.Extra["tag"].(string); ok && tag != "" {
 				s.Data["tag"] = tag
+			} else {
+				delete(s.Data, "tag")
 			}
 		}
 	}
 	return s
 }
 
+// foldFirstPrompt extracts the first real user prompt from an entry,
+// skipping meta, compact-summary, tool_result, slash-command, and auto-generated messages.
+func foldFirstPrompt(data map[string]any, entry SessionStoreEntry) {
+	if data["first_prompt_locked"] == true {
+		return
+	}
+	if entry.Type != "user" {
+		return
+	}
+	if entry.Extra["isMeta"] == true || entry.Extra["isCompactSummary"] == true {
+		return
+	}
+	// Skip tool_result-carrying user messages.
+	if msg, ok := entry.Extra["message"].(map[string]any); ok {
+		if content, ok := msg["content"].([]any); ok {
+			for _, block := range content {
+				if b, ok := block.(map[string]any); ok && b["type"] == "tool_result" {
+					return
+				}
+			}
+		}
+	}
+
+	for _, text := range entryTextBlocks(entry) {
+		result := strings.TrimSpace(strings.ReplaceAll(text, "\n", " "))
+		if result == "" {
+			continue
+		}
+		// Slash commands → stash as fallback.
+		if cmdMatch := commandNameRe.FindStringSubmatch(result); cmdMatch != nil {
+			if _, has := data["command_fallback"]; !has {
+				data["command_fallback"] = cmdMatch[1]
+			}
+			continue
+		}
+		// Skip auto-generated patterns.
+		if skipFirstPromptRe.MatchString(result) {
+			continue
+		}
+		// Truncate to 200 runes.
+		runes := []rune(result)
+		if len(runes) > 200 {
+			result = string(runes[:200]) + "…"
+		}
+		data["first_prompt"] = result
+		data["first_prompt_locked"] = true
+		return
+	}
+}
+
+// entryTextBlocks extracts text strings from a user entry's message content.
+func entryTextBlocks(entry SessionStoreEntry) []string {
+	msg, ok := entry.Extra["message"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	content := msg["content"]
+	switch c := content.(type) {
+	case string:
+		return []string{c}
+	case []any:
+		var texts []string
+		for _, block := range c {
+			if b, ok := block.(map[string]any); ok && b["type"] == "text" {
+				if t, ok := b["text"].(string); ok {
+					texts = append(texts, t)
+				}
+			}
+		}
+		return texts
+	}
+	return nil
+}
+
+// isoToEpochMs parses an ISO-8601 timestamp string to Unix epoch milliseconds.
+func isoToEpochMs(ts string) int64 {
+	// Handle trailing Z.
+	s := ts
+	if strings.HasSuffix(s, "Z") {
+		s = strings.TrimSuffix(s, "Z") + "+00:00"
+	}
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		return 0
+	}
+	return t.UnixMilli()
+}
+
 // ImportSessionToStore replays a local session transcript into a SessionStore.
-func ImportSessionToStore(store SessionStore, sessionID, directory string) error {
+// If includeSubagents is true (recommended), subagent transcripts under
+// <sessionId>/subagents/ are also imported with appropriate subpath keys.
+func ImportSessionToStore(store SessionStore, sessionID, directory string, includeSubagents ...bool) error {
 	if !validateUUID(sessionID) {
 		return fmt.Errorf("invalid session_id: %s", sessionID)
 	}
-	content, err := readSessionFileContent(sessionID, directory)
-	if err != nil || content == "" {
+
+	doSubagents := true
+	if len(includeSubagents) > 0 {
+		doSubagents = includeSubagents[0]
+	}
+
+	// Find the session file path to derive project key from parent dir name.
+	filePath, projectDir := findSessionFileWithDir(sessionID, directory)
+	if filePath == "" {
 		return fmt.Errorf("session %s not found", sessionID)
 	}
-	projectKey := ""
-	if directory != "" {
-		canonDir, err := filepath.EvalSymlinks(directory)
-		if err != nil {
-			canonDir = directory
-		}
-		projectKey = sanitizePath(normalizeUnicode(canonDir))
+
+	// Derive project key from the on-disk project directory name — matches
+	// TranscriptMirrorBatcher's key derivation so imported sessions are
+	// indistinguishable from live-mirrored ones.
+	projectKey := filepath.Base(projectDir)
+
+	// Import main transcript.
+	if err := importJSONLFileToStore(store, filePath, SessionKey{
+		ProjectKey: projectKey,
+		SessionID:  sessionID,
+	}); err != nil {
+		return err
 	}
-	key := SessionKey{ProjectKey: projectKey, SessionID: sessionID}
+
+	if !doSubagents {
+		return nil
+	}
+
+	// Import subagent transcripts: <projectDir>/<sessionId>/subagents/**/*.jsonl
+	subagentsDir := filepath.Join(projectDir, sessionID, "subagents")
+	return importSubagentDir(store, subagentsDir, projectKey, sessionID, "")
+}
+
+// importSubagentDir recursively imports subagent JSONL files from a directory.
+func importSubagentDir(store SessionStore, dir, projectKey, sessionID, relPrefix string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil // subagents dir may not exist
+	}
+	for _, e := range entries {
+		name := e.Name()
+		fullPath := filepath.Join(dir, name)
+		if e.IsDir() {
+			// Recurse into nested dirs (e.g. workflows/<runId>/).
+			nestedPrefix := name
+			if relPrefix != "" {
+				nestedPrefix = relPrefix + "/" + name
+			}
+			if err := importSubagentDir(store, fullPath, projectKey, sessionID, nestedPrefix); err != nil {
+				return err
+			}
+			continue
+		}
+		if !strings.HasPrefix(name, "agent-") || !strings.HasSuffix(name, ".jsonl") {
+			continue
+		}
+		// Derive subpath: subagents/agent-{id} or subagents/workflows/run-1/agent-{id}
+		agentID := strings.TrimPrefix(strings.TrimSuffix(name, ".jsonl"), "agent-")
+		subpath := "subagents/" + agentID
+		if relPrefix != "" {
+			subpath = "subagents/" + relPrefix + "/" + agentID
+		}
+		if err := importJSONLFileToStore(store, fullPath, SessionKey{
+			ProjectKey: projectKey,
+			SessionID:  sessionID,
+			Subpath:    subpath,
+		}); err != nil {
+			return err
+		}
+
+		// Import .meta.json sidecar (matching Python's import_session_to_store).
+		// The on-disk .jsonl does NOT contain agent_metadata entries — those are only
+		// sent to live mirrors and persisted in the .meta.json sidecar. Import the
+		// sidecar so materialize_resume_session() can recreate it and resumed subagents
+		// keep their agentType/worktreePath.
+		metaPath := strings.TrimSuffix(fullPath, ".jsonl") + ".meta.json"
+		if metaBytes, err := os.ReadFile(metaPath); err == nil {
+			var meta map[string]any
+			if json.Unmarshal(metaBytes, &meta) == nil {
+				// Python: meta_entry = {"type": "agent_metadata"}; meta_entry.update(meta)
+				meta["type"] = "agent_metadata"
+				metaEntry := SessionStoreEntry{
+					Type:      "agent_metadata",
+					UUID:      strVal(meta, "uuid"),
+					Timestamp: strVal(meta, "timestamp"),
+					Extra:     meta,
+				}
+				_ = store.Append(SessionKey{
+					ProjectKey: projectKey,
+					SessionID:  sessionID,
+					Subpath:    subpath,
+				}, []SessionStoreEntry{metaEntry})
+			}
+		}
+	}
+	return nil
+}
+
+// importJSONLFileToStore streams a JSONL file line-by-line and appends entries to
+// the store in batches. Matches Python's _append_jsonl_file_in_batches which flushes
+// at both MAX_PENDING_ENTRIES (500) and MAX_PENDING_BYTES (1 MiB) to bound memory.
+func importJSONLFileToStore(store SessionStore, filePath string, key SessionKey) error {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	const batchSize = MirrorMaxPendingEntries // 500, matches Python MAX_PENDING_ENTRIES
 	var entries []SessionStoreEntry
-	for _, line := range strings.Split(content, "\n") {
-		line = strings.TrimSpace(line)
+	nbytes := 0
+	scanner := bufio.NewScanner(f)
+	// Allow scanning lines up to 10 MiB (single large tool-result entries can be big).
+	scanner.Buffer(make([]byte, 64*1024), 10<<20)
+	for scanner.Scan() {
+		line := scanner.Text()
 		if line == "" {
 			continue
 		}
@@ -652,17 +1170,28 @@ func ImportSessionToStore(store SessionStore, sessionID, directory string) error
 			continue
 		}
 		entry := SessionStoreEntry{
-			Type: strVal(raw, "type"),
-			UUID: strVal(raw, "uuid"),
+			Type:      strVal(raw, "type"),
+			UUID:      strVal(raw, "uuid"),
+			Timestamp: strVal(raw, "timestamp"),
+			Extra:     raw,
 		}
-		entry.Timestamp = strVal(raw, "timestamp")
-		entry.Extra = raw
 		entries = append(entries, entry)
+		nbytes += len(line)
+		if len(entries) >= batchSize || nbytes >= MirrorMaxPendingBytes {
+			if err := store.Append(key, entries); err != nil {
+				return err
+			}
+			entries = entries[:0]
+			nbytes = 0
+		}
 	}
-	if len(entries) == 0 {
-		return nil
+	if err := scanner.Err(); err != nil {
+		return err
 	}
-	return store.Append(key, entries)
+	if len(entries) > 0 {
+		return store.Append(key, entries)
+	}
+	return nil
 }
 
 // readSessionFileContent finds and reads the raw JSONL content for a session.
@@ -905,8 +1434,27 @@ func getClaudeConfigDir() string {
 	return normalizeUnicode(filepath.Join(home, ".claude"))
 }
 
+// getClaudeConfigDirWithOverride is like getClaudeConfigDir but checks
+// envOverride["CLAUDE_CONFIG_DIR"] before os.Getenv. This lets callers
+// that pass a custom CLAUDE_CONFIG_DIR to a subprocess resolve the same
+// directory the subprocess writes to.
+func getClaudeConfigDirWithOverride(envOverride map[string]string) string {
+	if envOverride != nil {
+		if d, ok := envOverride["CLAUDE_CONFIG_DIR"]; ok && d != "" {
+			return normalizeUnicode(d)
+		}
+	}
+	return getClaudeConfigDir()
+}
+
 func getProjectsDir() string {
 	return filepath.Join(getClaudeConfigDir(), "projects")
+}
+
+// getProjectsWithOverride returns the projects directory, consulting
+// envOverride["CLAUDE_CONFIG_DIR"] before os.Getenv.
+func getProjectsWithOverride(envOverride map[string]string) string {
+	return filepath.Join(getClaudeConfigDirWithOverride(envOverride), "projects")
 }
 
 func getProjectDir(projectPath string) string {
@@ -1326,6 +1874,11 @@ func getWorktreePaths(cwd string) []string {
 		if strings.HasPrefix(line, "worktree ") {
 			path := strings.TrimPrefix(line, "worktree ")
 			path = strings.TrimSpace(path)
+			// NFC-normalize to match Python's unicodedata.normalize("NFC", ...)
+			// call in _get_worktree_paths. On macOS HFS+, git may return NFD
+			// (decomposed) paths that must be normalized before directory-name
+			// computation (sanitizePath / simpleHash) to match the on-disk key.
+			path = normalizeUnicode(path)
 			if first {
 				first = false
 				continue // skip main worktree

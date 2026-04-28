@@ -24,7 +24,7 @@ func buildCmd(opts *ClaudeAgentOptions) []string {
 
 func hasFlag(cmd []string, flag string) bool {
 	for _, v := range cmd {
-		if v == flag {
+		if v == flag || strings.HasPrefix(v, flag+"=") {
 			return true
 		}
 	}
@@ -35,6 +35,9 @@ func flagValue(cmd []string, flag string) string {
 	for i, v := range cmd {
 		if v == flag && i+1 < len(cmd) {
 			return cmd[i+1]
+		}
+		if strings.HasPrefix(v, flag+"=") {
+			return strings.TrimPrefix(v, flag+"=")
 		}
 	}
 	return ""
@@ -66,6 +69,22 @@ func TestBuildCommand_SettingSourcesEmpty(t *testing.T) {
 	cmd := buildCmd(&ClaudeAgentOptions{})
 	if hasFlag(cmd, "--setting-sources") {
 		t.Error("--setting-sources should NOT appear when SettingSources is empty")
+	}
+}
+
+// TestBuildCommand_SettingSourcesExplicitEmpty verifies that an explicitly-set
+// empty slice emits "--setting-sources=" (disables all file-system sources).
+// Matches Python SDK v0.1.53+ behaviour: `if effective_setting_sources is not None`.
+func TestBuildCommand_SettingSourcesExplicitEmpty(t *testing.T) {
+	cmd := buildCmd(&ClaudeAgentOptions{
+		SettingSources: []SettingSource{},
+	})
+	if !hasFlag(cmd, "--setting-sources") {
+		t.Error("--setting-sources should appear when SettingSources is explicitly empty slice (disables all sources)")
+	}
+	val := flagValue(cmd, "--setting-sources")
+	if val != "" {
+		t.Errorf("expected empty --setting-sources value, got %q", val)
 	}
 }
 
@@ -585,9 +604,9 @@ func TestConnect_EnvFiltering(t *testing.T) {
 	// The actual filtering happens in connect(), but we verify the code compiles
 	// and the command building works with all new options.
 	cmd := buildCmd(&ClaudeAgentOptions{
-		SessionID:   "test-session",
-		TaskBudget:  &TaskBudget{Total: 10000},
-		Thinking:    &ThinkingAdaptive{},
+		SessionID:  "test-session",
+		TaskBudget: &TaskBudget{Total: 10000},
+		Thinking:   &ThinkingAdaptive{},
 		SystemPrompt: &SystemPromptPreset{
 			Type:                   "preset",
 			Preset:                 "claude_code",
@@ -667,14 +686,14 @@ func TestBuildCommand_SessionMirror(t *testing.T) {
 type noopSessionStore struct{}
 
 func (s *noopSessionStore) Append(key SessionKey, entries []SessionStoreEntry) error { return nil }
-func (s *noopSessionStore) Load(key SessionKey) ([]SessionStoreEntry, error)        { return nil, nil }
+func (s *noopSessionStore) Load(key SessionKey) ([]SessionStoreEntry, error)         { return nil, nil }
 func (s *noopSessionStore) ListSessions(projectKey string) ([]SessionStoreListEntry, error) {
 	return nil, nil
 }
 func (s *noopSessionStore) ListSessionSummaries(projectKey string) ([]SessionSummaryEntry, error) {
 	return nil, nil
 }
-func (s *noopSessionStore) Delete(key SessionKey) error                        { return nil }
+func (s *noopSessionStore) Delete(key SessionKey) error { return nil }
 func (s *noopSessionStore) ListSubkeys(projectKey, sessionID string) ([]string, error) {
 	return nil, nil
 }

@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -61,11 +62,12 @@ func QueryStream(ctx context.Context, promptCh <-chan map[string]any, opts *Clau
 type ClaudeSDKClient struct {
 	opts *ClaudeAgentOptions
 
-	mu        sync.Mutex
-	transport *cliTransport
-	proto     *queryProto
-	msgCh     <-chan map[string]any
-	closed    bool
+	mu           sync.Mutex
+	transport    *cliTransport
+	proto        *queryProto
+	msgCh        <-chan map[string]any
+	closed       bool
+	materialized *MaterializedResume
 }
 
 // NewClaudeSDKClient creates a new streaming client.  The underlying CLI
@@ -77,7 +79,22 @@ func NewClaudeSDKClient(ctx context.Context, opts *ClaudeAgentOptions) (*ClaudeS
 		opts = &ClaudeAgentOptions{}
 	}
 
+	// Validate session store option combinations.
+	if err := ValidateSessionStoreOptions(opts); err != nil {
+		return nil, &CLIConnectionError{Message: err.Error()}
+	}
+
+	// resume/continue + session_store: load the session from the store into a
+	// temp CLAUDE_CONFIG_DIR for the subprocess to resume from.
+	materialized, err := MaterializeResumeSession(ctx, opts)
+	if err != nil {
+		return nil, &CLIConnectionError{Message: err.Error()}
+	}
+
 	configuredOpts := *opts
+	if materialized != nil {
+		configuredOpts = ApplyMaterializedOptions(configuredOpts, materialized)
+	}
 	if opts.CanUseTool != nil && opts.PermissionPromptToolName != "" {
 		return nil, &CLIConnectionError{
 			Message: "CanUseTool and PermissionPromptToolName are mutually exclusive",
@@ -130,10 +147,30 @@ func NewClaudeSDKClient(ctx context.Context, opts *ClaudeAgentOptions) (*ClaudeS
 		q.SetSkills(configuredOpts.Skills)
 	}
 
+	// Attach transcript mirror batcher if session store is configured.
+	if configuredOpts.SessionStore != nil {
+		projectsDir := getProjectsDir()
+		if materialized != nil {
+			projectsDir = filepath.Join(materialized.ConfigDir, "projects")
+		}
+		batcher := NewTranscriptMirrorBatcher(
+			configuredOpts.SessionStore,
+			projectsDir,
+			func(key *SessionKey, errMsg string) {
+				// Inject the error as a synthesized MirrorErrorMessage so callers
+				// see it via ReceiveMessages(). Mirrors Python's report_mirror_error
+				// which calls self._message_send.send_nowait(msg).
+				q.ReportMirrorError(key, errMsg)
+			},
+		)
+		q.SetMirrorBatcher(batcher)
+	}
+
 	client := &ClaudeSDKClient{
-		opts:      &configuredOpts,
-		transport: t,
-		proto:     q,
+		opts:         &configuredOpts,
+		transport:    t,
+		proto:        q,
+		materialized: materialized,
 	}
 
 	// Start the read loop BEFORE sending the initialize request.
@@ -168,6 +205,10 @@ func (c *ClaudeSDKClient) Close() error {
 		return nil
 	}
 	c.closed = true
+	// Cleanup materialized temp dir (session resume).
+	if c.materialized != nil && c.materialized.Cleanup != nil {
+		c.materialized.Cleanup()
+	}
 	if c.transport == nil {
 		return nil
 	}

@@ -3,6 +3,7 @@ package claude
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"time"
 )
 
@@ -29,7 +30,25 @@ func processQuery(
 		}
 	}
 
+	// Validate session store option combinations.
+	if err := ValidateSessionStoreOptions(opts); err != nil {
+		return nil, &CLIConnectionError{Message: err.Error()}
+	}
+
+	// resume/continue + session_store: load the session from the store into a
+	// temp CLAUDE_CONFIG_DIR for the subprocess to resume from.
+	materialized, err := MaterializeResumeSession(ctx, opts)
+	if err != nil {
+		return nil, &CLIConnectionError{Message: err.Error()}
+	}
+	if materialized != nil {
+		defer materialized.Cleanup()
+	}
+
 	configuredOpts := *opts
+	if materialized != nil {
+		configuredOpts = ApplyMaterializedOptions(configuredOpts, materialized)
+	}
 	if opts.CanUseTool != nil {
 		configuredOpts.PermissionPromptToolName = "stdio"
 	}
@@ -65,6 +84,32 @@ func processQuery(
 	q := newQueryProto(t, &configuredOpts)
 	q.SetSDKMCPServers(sdkServers)
 	q.SetAgents(agentsMap)
+	if sp, ok := configuredOpts.SystemPrompt.(*SystemPromptPreset); ok && sp.ExcludeDynamicSections != nil {
+		q.SetExcludeDynamicSections(sp.ExcludeDynamicSections)
+	}
+	if configuredOpts.Skills != nil {
+		q.SetSkills(configuredOpts.Skills)
+	}
+	out := make(chan Message, 64)
+
+	// Attach transcript mirror batcher if session store is configured.
+	if configuredOpts.SessionStore != nil {
+		projectsDir := getProjectsDir()
+		if materialized != nil {
+			projectsDir = filepath.Join(materialized.ConfigDir, "projects")
+		}
+		batcher := NewTranscriptMirrorBatcher(
+			configuredOpts.SessionStore,
+			projectsDir,
+			func(key *SessionKey, errMsg string) {
+				// Inject the mirror error as a synthesized system message so consumers
+				// see it as a MirrorErrorMessage. Uses q.ReportMirrorError which writes
+				// to q.rawOut; the conversion goroutine below parses and forwards it.
+				q.ReportMirrorError(key, errMsg)
+			},
+		)
+		q.SetMirrorBatcher(batcher)
+	}
 
 	// Start the read loop BEFORE sending the initialize request.
 	// This mirrors Python SDK's `await query.start()` then `await query.initialize()`.
@@ -108,7 +153,6 @@ func processQuery(
 			_ = t.closeStdin()
 		}
 	}
-	out := make(chan Message, 64)
 
 	go func() {
 		defer close(out)

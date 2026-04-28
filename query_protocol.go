@@ -6,6 +6,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
+	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -39,7 +42,7 @@ type queryProto struct {
 	pending   map[string]chan controlResult
 
 	// inflightHandlers tracks running inbound request handlers for cancellation.
-	inflightMu      sync.Mutex
+	inflightMu       sync.Mutex
 	inflightHandlers map[string]context.CancelFunc
 
 	// excludeDynamicSections is sent in the initialize request when set.
@@ -47,6 +50,15 @@ type queryProto struct {
 
 	// skills is sent in the initialize request when set.
 	skills any // nil | "all" | []string
+
+	// mirrorBatcher handles transcript_mirror frames from stdout.
+	mirrorBatcher *TranscriptMirrorBatcher
+
+	// rawOut is the output channel created in Run(). Stored here so
+	// ReportMirrorError can inject SDK-synthesized messages without
+	// needing the caller to pass the channel explicitly — matching
+	// Python's self._message_send.send_nowait() pattern.
+	rawOut chan map[string]any
 }
 
 type controlResult struct {
@@ -56,13 +68,14 @@ type controlResult struct {
 
 func newQueryProto(t *cliTransport, opts *ClaudeAgentOptions) *queryProto {
 	return &queryProto{
-		transport:              t,
-		opts:                   opts,
-		hookCallbacks:          make(map[string]HookCallback),
-		hookTimeouts:           make(map[string]float64),
-		firstResultCh:          make(chan struct{}),
-		pending:                make(map[string]chan controlResult),
-		inflightHandlers:       make(map[string]context.CancelFunc),
+		transport:        t,
+		opts:             opts,
+		hookCallbacks:    make(map[string]HookCallback),
+		hookTimeouts:     make(map[string]float64),
+		firstResultCh:    make(chan struct{}),
+		pending:          make(map[string]chan controlResult),
+		inflightHandlers: make(map[string]context.CancelFunc),
+		rawOut:           make(chan map[string]any, 64),
 	}
 }
 
@@ -80,6 +93,38 @@ func (q *queryProto) SetExcludeDynamicSections(v *bool) {
 
 func (q *queryProto) SetSkills(s any) {
 	q.skills = s
+}
+
+// SetMirrorBatcher attaches a TranscriptMirrorBatcher that receives transcript_mirror frames.
+func (q *queryProto) SetMirrorBatcher(batcher *TranscriptMirrorBatcher) {
+	q.mirrorBatcher = batcher
+}
+
+// ReportMirrorError injects a MirrorErrorMessage into the output channel.
+// Called from the batcher's on_error callback when store.Append fails.
+// Mirrors Python's query.report_mirror_error() which calls
+// self._message_send.send_nowait(msg) — non-blocking and best-effort.
+func (q *queryProto) ReportMirrorError(key *SessionKey, errMsg string) {
+	if q.rawOut == nil {
+		return
+	}
+	msg := map[string]any{
+		"type":       "system",
+		"subtype":    "mirror_error",
+		"error":      errMsg,
+		"key":        key,
+		"uuid":       newUUID(),
+		"session_id": "",
+	}
+	if key != nil {
+		msg["session_id"] = key.SessionID
+	}
+	defer func() { recover() }() // guard against writing to closed channel
+	select {
+	case q.rawOut <- msg:
+	default:
+		// Non-blocking — if buffer full, drop (matches Python's send_nowait).
+	}
 }
 
 // GetContextUsage sends a get_context_usage control request and returns the raw response.
@@ -161,12 +206,26 @@ func (q *queryProto) Initialize(ctx context.Context) (map[string]any, error) {
 		reqPayload["skills"] = skills
 	}
 
-	resp, err := q.SendControlRequest(ctx, reqPayload, 30*time.Second)
+	resp, err := q.SendControlRequest(ctx, reqPayload, initializeTimeout())
 	if err != nil {
 		return nil, &CLIConnectionError{Message: "failed to initialize SDK", Cause: err}
 	}
 	q.initResult = resp
 	return resp, nil
+}
+
+// initializeTimeout returns the timeout for the initialize handshake.
+// Reads CLAUDE_CODE_STREAM_CLOSE_TIMEOUT (ms) with a minimum of 60 seconds,
+// matching the Python SDK's client.py behaviour.
+func initializeTimeout() time.Duration {
+	ms := 60000 // default 60s
+	if s := os.Getenv("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT"); s != "" {
+		if v, err := strconv.Atoi(s); err == nil && v > 0 {
+			ms = v
+		}
+	}
+	secs := math.Max(float64(ms)/1000.0, 60.0)
+	return time.Duration(secs * float64(time.Second))
 }
 
 // SendUserMessage sends a user turn to the CLI.
@@ -241,9 +300,15 @@ func (q *queryProto) SendControlRequest(ctx context.Context, payload map[string]
 // pending waiters, and forwards all other messages on the returned channel.
 func (q *queryProto) Run(ctx context.Context) <-chan map[string]any {
 	raws := q.transport.readMessages(ctx)
-	out := make(chan map[string]any, 64)
+	out := q.rawOut
 	go func() {
-		defer close(out)
+		defer func() {
+			// Final flush of any remaining mirror entries before closing.
+			if q.mirrorBatcher != nil {
+				q.mirrorBatcher.Close()
+			}
+			close(out)
+		}()
 		for raw := range raws {
 			msgType := strVal(raw, "type")
 			switch msgType {
@@ -302,7 +367,24 @@ func (q *queryProto) Run(ctx context.Context) <-chan map[string]any {
 					ch <- controlResult{data: data}
 				}
 
+			case "transcript_mirror":
+				// Peel transcript_mirror frames off stdout and hand to the batcher.
+				// These are NOT yielded to consumers.
+				if q.mirrorBatcher != nil {
+					filePath := strVal(raw, "filePath")
+					if entriesRaw, ok := raw["entries"].([]any); ok && filePath != "" {
+						entries := parseMirrorEntries(entriesRaw)
+						q.mirrorBatcher.Enqueue(filePath, entries)
+					}
+				}
+				continue
+
 			case "result":
+				// Flush pending transcript mirror entries BEFORE yielding result
+				// so consumers observing the result can rely on the store being up to date.
+				if q.mirrorBatcher != nil {
+					q.mirrorBatcher.Flush()
+				}
 				// Signal stdin can be closed.
 				q.firstResultOnce.Do(func() { close(q.firstResultCh) })
 				select {
@@ -508,14 +590,14 @@ func (q *queryProto) handleMCPMessage(ctx context.Context, req map[string]any) (
 		if err != nil {
 			return buildError(-32603, err.Error()), nil
 		}
-			// Forward maxResultSizeChars via _meta for tools that have it.
-			for i := range tools {
-				if tools[i].Annotations != nil && tools[i].Annotations.MaxResultSizeChars != nil {
-					tools[i].Meta = map[string]any{
-						"anthropic/maxResultSizeChars": *tools[i].Annotations.MaxResultSizeChars,
-					}
+		// Forward maxResultSizeChars via _meta for tools that have it.
+		for i := range tools {
+			if tools[i].Annotations != nil && tools[i].Annotations.MaxResultSizeChars != nil {
+				tools[i].Meta = map[string]any{
+					"anthropic/maxResultSizeChars": *tools[i].Annotations.MaxResultSizeChars,
 				}
 			}
+		}
 		b, _ := json.Marshal(map[string]any{"tools": tools})
 		var result map[string]any
 		_ = json.Unmarshal(b, &result)
@@ -563,4 +645,24 @@ func newUUID() string {
 		hex.EncodeToString(b[6:8]) + "-" +
 		hex.EncodeToString(b[8:10]) + "-" +
 		hex.EncodeToString(b[10:])
+}
+
+// parseMirrorEntries converts raw JSON array entries from a transcript_mirror
+// frame into SessionStoreEntry structs.
+func parseMirrorEntries(raw []any) []SessionStoreEntry {
+	entries := make([]SessionStoreEntry, 0, len(raw))
+	for _, r := range raw {
+		m, ok := r.(map[string]any)
+		if !ok {
+			continue
+		}
+		entry := SessionStoreEntry{
+			Type:      strVal(m, "type"),
+			UUID:      strVal(m, "uuid"),
+			Timestamp: strVal(m, "timestamp"),
+			Extra:     m,
+		}
+		entries = append(entries, entry)
+	}
+	return entries
 }

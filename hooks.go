@@ -59,10 +59,10 @@ type HookMatcher struct {
 
 // BaseHookInput is the common fields for all hook inputs.
 type BaseHookInput struct {
-	SessionID       string         `json:"session_id"`
-	TranscriptPath  string         `json:"transcript_path"`
-	CWD             string         `json:"cwd"`
-	PermissionMode  string         `json:"permission_mode,omitempty"`
+	SessionID      string `json:"session_id"`
+	TranscriptPath string `json:"transcript_path"`
+	CWD            string `json:"cwd"`
+	PermissionMode string `json:"permission_mode,omitempty"`
 }
 
 // SubagentContextMixin provides agent context for tool lifecycle hooks.
@@ -131,8 +131,8 @@ type SubagentStopHookInput struct {
 // PreCompactHookInput is the input for PreCompact hooks.
 type PreCompactHookInput struct {
 	BaseHookInput
-	HookEventName     string `json:"hook_event_name"`
-	Trigger           string `json:"trigger"`
+	HookEventName      string `json:"hook_event_name"`
+	Trigger            string `json:"trigger"`
 	CustomInstructions string `json:"custom_instructions,omitempty"`
 }
 
@@ -157,9 +157,9 @@ type SubagentStartHookInput struct {
 type PermissionRequestHookInput struct {
 	BaseHookInput
 	SubagentContextMixin
-	HookEventName        string         `json:"hook_event_name"`
-	ToolName             string         `json:"tool_name"`
-	ToolInput            map[string]any `json:"tool_input"`
+	HookEventName         string         `json:"hook_event_name"`
+	ToolName              string         `json:"tool_name"`
+	ToolInput             map[string]any `json:"tool_input"`
 	PermissionSuggestions []any          `json:"permission_suggestions,omitempty"`
 }
 
@@ -169,35 +169,35 @@ type PermissionRequestHookInput struct {
 
 // SyncHookJSONOutput is the output for synchronous hook callbacks.
 type SyncHookJSONOutput struct {
-	Continue          *bool  `json:"continue,omitempty"`
-	SuppressOutput    *bool  `json:"suppressOutput,omitempty"`
-	StopReason        string `json:"stopReason,omitempty"`
-	Decision          string `json:"decision,omitempty"`
-	SystemMessage     string `json:"systemMessage,omitempty"`
-	Reason            string `json:"reason,omitempty"`
-	HookSpecificOutput any   `json:"hookSpecificOutput,omitempty"`
+	Continue           *bool  `json:"continue,omitempty"`
+	SuppressOutput     *bool  `json:"suppressOutput,omitempty"`
+	StopReason         string `json:"stopReason,omitempty"`
+	Decision           string `json:"decision,omitempty"`
+	SystemMessage      string `json:"systemMessage,omitempty"`
+	Reason             string `json:"reason,omitempty"`
+	HookSpecificOutput any    `json:"hookSpecificOutput,omitempty"`
 }
 
 // AsyncHookJSONOutput is the output for asynchronous hook callbacks.
 type AsyncHookJSONOutput struct {
-	Async        bool    `json:"async"`
-	AsyncTimeout float64 `json:"asyncTimeout,omitempty"`
+	Async        bool `json:"async"`
+	AsyncTimeout int  `json:"asyncTimeout,omitempty"`
 }
 
 // PreToolUseHookSpecificOutput is the hook-specific output for PreToolUse.
 type PreToolUseHookSpecificOutput struct {
-	HookEventName              string         `json:"hookEventName"`
-	PermissionDecision         string         `json:"permissionDecision,omitempty"`
-	PermissionDecisionReason   string         `json:"permissionDecisionReason,omitempty"`
-	UpdatedInput               map[string]any `json:"updatedInput,omitempty"`
-	AdditionalContext          string         `json:"additionalContext,omitempty"`
+	HookEventName            string         `json:"hookEventName"`
+	PermissionDecision       string         `json:"permissionDecision,omitempty"`
+	PermissionDecisionReason string         `json:"permissionDecisionReason,omitempty"`
+	UpdatedInput             map[string]any `json:"updatedInput,omitempty"`
+	AdditionalContext        string         `json:"additionalContext,omitempty"`
 }
 
 // PostToolUseHookSpecificOutput is the hook-specific output for PostToolUse.
 type PostToolUseHookSpecificOutput struct {
-	HookEventName       string         `json:"hookEventName"`
-	AdditionalContext   string         `json:"additionalContext,omitempty"`
-	UpdatedMCPToolOutput map[string]any `json:"updatedMCPToolOutput,omitempty"`
+	HookEventName        string `json:"hookEventName"`
+	AdditionalContext    string `json:"additionalContext,omitempty"`
+	UpdatedMCPToolOutput any    `json:"updatedMCPToolOutput,omitempty"`
 }
 
 // PostToolUseFailureHookSpecificOutput is the hook-specific output for PostToolUseFailure.
@@ -208,6 +208,12 @@ type PostToolUseFailureHookSpecificOutput struct {
 
 // UserPromptSubmitHookSpecificOutput is the hook-specific output for UserPromptSubmit.
 type UserPromptSubmitHookSpecificOutput struct {
+	HookEventName     string `json:"hookEventName"`
+	AdditionalContext string `json:"additionalContext,omitempty"`
+}
+
+// SessionStartHookSpecificOutput is the hook-specific output for SessionStart.
+type SessionStartHookSpecificOutput struct {
 	HookEventName     string `json:"hookEventName"`
 	AdditionalContext string `json:"additionalContext,omitempty"`
 }

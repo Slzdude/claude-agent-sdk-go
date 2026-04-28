@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // InMemorySessionStore is a reference implementation of SessionStore for testing.
@@ -12,6 +13,8 @@ type InMemorySessionStore struct {
 	mu        sync.RWMutex
 	data      map[string][]SessionStoreEntry
 	summaries map[string]*SessionSummaryEntry
+	mtimes    map[string]int64 // per-key storage write time (epoch ms)
+	lastMtime int64            // strictly-monotonic counter (protected by mu)
 }
 
 // NewInMemorySessionStore creates a new in-memory session store.
@@ -19,7 +22,19 @@ func NewInMemorySessionStore() *InMemorySessionStore {
 	return &InMemorySessionStore{
 		data:      make(map[string][]SessionStoreEntry),
 		summaries: make(map[string]*SessionSummaryEntry),
+		mtimes:    make(map[string]int64),
 	}
+}
+
+// nextMtime returns a strictly-monotonically-increasing timestamp in epoch ms.
+// Matches Python's InMemorySessionStore._next_mtime() guarantee.
+func (s *InMemorySessionStore) nextMtime() int64 {
+	now := time.Now().UnixMilli()
+	if now <= s.lastMtime {
+		now = s.lastMtime + 1
+	}
+	s.lastMtime = now
+	return now
 }
 
 func (s *InMemorySessionStore) keyStr(key SessionKey) string {
@@ -35,15 +50,18 @@ func (s *InMemorySessionStore) Append(key SessionKey, entries []SessionStoreEntr
 	defer s.mu.Unlock()
 	k := s.keyStr(key)
 	s.data[k] = append(s.data[k], entries...)
+	// Use strictly-monotonic mtime — same clock for both the list entry and
+	// the summary sidecar (matching Python's InMemorySessionStore._next_mtime).
+	nowMs := s.nextMtime()
+	s.mtimes[k] = nowMs
 	// Update summary for main transcripts (no subpath).
 	if key.Subpath == "" {
-		mtime := int64(0)
-		if len(entries) > 0 {
-			mtime = 1000 // placeholder
-		}
 		s.summaries[key.SessionID] = FoldSessionSummary(
-			s.summaries[key.SessionID], key, entries, mtime,
+			s.summaries[key.SessionID], key, entries,
 		)
+		// Stamp the sidecar with the same clock used for list_sessions so the
+		// fast-path staleness check (summary.mtime vs list_sessions mtime) works.
+		s.summaries[key.SessionID].Mtime = nowMs
 	}
 	return nil
 }
@@ -67,7 +85,7 @@ func (s *InMemorySessionStore) ListSessions(projectKey string) ([]SessionStoreLi
 	defer s.mu.RUnlock()
 	var result []SessionStoreListEntry
 	prefix := projectKey + "/"
-	for k, entries := range s.data {
+	for k := range s.data {
 		if !strings.HasPrefix(k, prefix) {
 			continue
 		}
@@ -77,10 +95,11 @@ func (s *InMemorySessionStore) ListSessions(projectKey string) ([]SessionStoreLi
 			continue
 		}
 		sid := rest
-		mtime := int64(0)
-		if len(entries) > 0 {
-			mtime = 1000
-		}
+		// Return the stored mtime from when the session was last appended,
+		// matching Python which stores _mtimes[k] at append time and returns
+		// it from list_sessions(). Using time.Now() here would be wrong:
+		// all sessions would get the same mtime, defeating sort order.
+		mtime := s.mtimes[k] // 0 if never appended (shouldn't happen)
 		result = append(result, SessionStoreListEntry{SessionID: sid, Mtime: mtime})
 	}
 	sort.Slice(result, func(i, j int) bool {

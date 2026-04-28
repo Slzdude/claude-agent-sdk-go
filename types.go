@@ -42,19 +42,21 @@ const (
 
 // AgentDefinition describes a custom sub-agent.
 type AgentDefinition struct {
-	Description     string          `json:"description"`
-	Prompt          string          `json:"prompt"`
-	Tools           []string        `json:"tools,omitempty"`
-	DisallowedTools []string        `json:"disallowedTools,omitempty"`
-	Model           string          `json:"model,omitempty"` // "sonnet", "opus", "haiku", "inherit", or full model ID
-	Skills          []string        `json:"skills,omitempty"`
-	Memory          string          `json:"memory,omitempty"` // "user", "project", "local"
-	MCPServers      []map[string]any `json:"mcpServers,omitempty"`
-	InitialPrompt   string          `json:"initialPrompt,omitempty"`
-	MaxTurns        *int            `json:"maxTurns,omitempty"`
-	Background      *bool           `json:"background,omitempty"`
-	Effort          EffortLevel     `json:"effort,omitempty"`
-	PermissionMode  *PermissionMode `json:"permissionMode,omitempty"`
+	Description     string   `json:"description"`
+	Prompt          string   `json:"prompt"`
+	Tools           []string `json:"tools,omitempty"`
+	DisallowedTools []string `json:"disallowedTools,omitempty"`
+	Model           string   `json:"model,omitempty"` // "sonnet", "opus", "haiku", "inherit", or full model ID
+	Skills          []string `json:"skills,omitempty"`
+	Memory          string   `json:"memory,omitempty"` // "user", "project", "local"
+	// MCPServers is a list of server name strings or inline {name: config} dicts.
+	// Matches Python's list[str | dict[str, Any]].
+	MCPServers     []any           `json:"mcpServers,omitempty"`
+	InitialPrompt  string          `json:"initialPrompt,omitempty"`
+	MaxTurns       *int            `json:"maxTurns,omitempty"`
+	Background     *bool           `json:"background,omitempty"`
+	Effort         EffortLevel     `json:"effort,omitempty"`
+	PermissionMode *PermissionMode `json:"permissionMode,omitempty"`
 }
 
 // -----------------------------------------------------------------------
@@ -187,14 +189,14 @@ func (b *ToolResultBlock) contentBlockType() string { return "tool_result" }
 type ServerToolName string
 
 const (
-	ServerToolAdvisor               ServerToolName = "advisor"
-	ServerToolWebSearch             ServerToolName = "web_search"
-	ServerToolWebFetch              ServerToolName = "web_fetch"
-	ServerToolCodeExecution         ServerToolName = "code_execution"
-	ServerToolBashCodeExecution     ServerToolName = "bash_code_execution"
-	ServerToolTextEditorCodeExec    ServerToolName = "text_editor_code_execution"
-	ServerToolSearchToolRegex       ServerToolName = "tool_search_tool_regex"
-	ServerToolSearchToolBM25        ServerToolName = "tool_search_tool_bm25"
+	ServerToolAdvisor            ServerToolName = "advisor"
+	ServerToolWebSearch          ServerToolName = "web_search"
+	ServerToolWebFetch           ServerToolName = "web_fetch"
+	ServerToolCodeExecution      ServerToolName = "code_execution"
+	ServerToolBashCodeExecution  ServerToolName = "bash_code_execution"
+	ServerToolTextEditorCodeExec ServerToolName = "text_editor_code_execution"
+	ServerToolSearchToolRegex    ServerToolName = "tool_search_tool_regex"
+	ServerToolSearchToolBM25     ServerToolName = "tool_search_tool_bm25"
 )
 
 // ServerToolUseBlock represents a server-side tool invocation (e.g. advisor, web_search).
@@ -332,21 +334,21 @@ func (m *MirrorErrorMessage) messageType() string { return "mirror_error" }
 
 // ResultMessage is the final message from a query.
 type ResultMessage struct {
-	Subtype          string         `json:"subtype"`
-	DurationMs       int            `json:"duration_ms"`
-	DurationAPIMs    int            `json:"duration_api_ms"`
-	IsError          bool           `json:"is_error"`
-	NumTurns         int            `json:"num_turns"`
-	SessionID        string         `json:"session_id"`
-	StopReason       string         `json:"stop_reason,omitempty"`
-	TotalCostUSD     *float64       `json:"total_cost_usd,omitempty"`
-	Usage            map[string]any `json:"usage,omitempty"`
-	Result           string         `json:"result,omitempty"`
-	StructuredOutput any            `json:"structured_output,omitempty"`
-	ModelUsage       map[string]any `json:"model_usage,omitempty"`
-	PermissionDenials []any         `json:"permission_denials,omitempty"`
-	Errors           []string       `json:"errors,omitempty"`
-	UUID             string         `json:"uuid,omitempty"`
+	Subtype           string         `json:"subtype"`
+	DurationMs        int            `json:"duration_ms"`
+	DurationAPIMs     int            `json:"duration_api_ms"`
+	IsError           bool           `json:"is_error"`
+	NumTurns          int            `json:"num_turns"`
+	SessionID         string         `json:"session_id"`
+	StopReason        string         `json:"stop_reason,omitempty"`
+	TotalCostUSD      *float64       `json:"total_cost_usd,omitempty"`
+	Usage             map[string]any `json:"usage,omitempty"`
+	Result            string         `json:"result,omitempty"`
+	StructuredOutput  any            `json:"structured_output,omitempty"`
+	ModelUsage        map[string]any `json:"model_usage,omitempty"`
+	PermissionDenials []any          `json:"permission_denials,omitempty"`
+	Errors            []string       `json:"errors,omitempty"`
+	UUID              string         `json:"uuid,omitempty"`
 }
 
 func (m *ResultMessage) messageType() string { return "result" }
@@ -378,11 +380,11 @@ const (
 type RateLimitType string
 
 const (
-	RateLimitTypeFiveHour     RateLimitType = "five_hour"
-	RateLimitTypeSevenDay     RateLimitType = "seven_day"
-	RateLimitTypeSevenDayOpus RateLimitType = "seven_day_opus"
+	RateLimitTypeFiveHour       RateLimitType = "five_hour"
+	RateLimitTypeSevenDay       RateLimitType = "seven_day"
+	RateLimitTypeSevenDayOpus   RateLimitType = "seven_day_opus"
 	RateLimitTypeSevenDaySonnet RateLimitType = "seven_day_sonnet"
-	RateLimitTypeOverage      RateLimitType = "overage"
+	RateLimitTypeOverage        RateLimitType = "overage"
 )
 
 // RateLimitInfo carries rate limit status details.
@@ -420,25 +422,25 @@ type ContextUsageCategory struct {
 
 // ContextUsageResponse describes the current context window usage.
 type ContextUsageResponse struct {
-	Categories            []ContextUsageCategory `json:"categories"`
-	TotalTokens           int                    `json:"totalTokens"`
-	MaxTokens             int                    `json:"maxTokens"`
-	RawMaxTokens          int                    `json:"rawMaxTokens"`
-	Percentage            float64                `json:"percentage"`
-	Model                 string                 `json:"model"`
-	IsAutoCompactEnabled  bool                   `json:"isAutoCompactEnabled"`
-	MemoryFiles           []map[string]any       `json:"memoryFiles"`
-	MCPTools              []map[string]any       `json:"mcpTools"`
-	Agents                []map[string]any       `json:"agents"`
-	GridRows              [][]map[string]any     `json:"gridRows"`
-	AutoCompactThreshold  *int                   `json:"autoCompactThreshold,omitempty"`
-	DeferredBuiltinTools  []map[string]any       `json:"deferredBuiltinTools,omitempty"`
-	SystemTools           []map[string]any       `json:"systemTools,omitempty"`
-	SystemPromptSections  []map[string]any       `json:"systemPromptSections,omitempty"`
-	SlashCommands         map[string]any         `json:"slashCommands,omitempty"`
-	Skills                map[string]any         `json:"skills,omitempty"`
-	MessageBreakdown      map[string]any         `json:"messageBreakdown,omitempty"`
-	APIUsage              map[string]any         `json:"apiUsage,omitempty"`
+	Categories           []ContextUsageCategory `json:"categories"`
+	TotalTokens          int                    `json:"totalTokens"`
+	MaxTokens            int                    `json:"maxTokens"`
+	RawMaxTokens         int                    `json:"rawMaxTokens"`
+	Percentage           float64                `json:"percentage"`
+	Model                string                 `json:"model"`
+	IsAutoCompactEnabled bool                   `json:"isAutoCompactEnabled"`
+	MemoryFiles          []map[string]any       `json:"memoryFiles"`
+	MCPTools             []map[string]any       `json:"mcpTools"`
+	Agents               []map[string]any       `json:"agents"`
+	GridRows             [][]map[string]any     `json:"gridRows"`
+	AutoCompactThreshold *int                   `json:"autoCompactThreshold,omitempty"`
+	DeferredBuiltinTools []map[string]any       `json:"deferredBuiltinTools,omitempty"`
+	SystemTools          []map[string]any       `json:"systemTools,omitempty"`
+	SystemPromptSections []map[string]any       `json:"systemPromptSections,omitempty"`
+	SlashCommands        map[string]any         `json:"slashCommands,omitempty"`
+	Skills               map[string]any         `json:"skills,omitempty"`
+	MessageBreakdown     map[string]any         `json:"messageBreakdown,omitempty"`
+	APIUsage             map[string]any         `json:"apiUsage,omitempty"`
 }
 
 // -----------------------------------------------------------------------
@@ -478,15 +480,60 @@ type ThinkingDisabled struct{}
 
 func (t *ThinkingDisabled) thinkingType() string { return "disabled" }
 
+// SandboxNetworkConfig is the network configuration for sandbox.
+type SandboxNetworkConfig struct {
+	// AllowUnixSockets is a list of Unix socket paths accessible in sandbox (e.g., SSH agents).
+	AllowUnixSockets []string `json:"allowUnixSockets,omitempty"`
+	// AllowAllUnixSockets allows all Unix sockets (less secure).
+	AllowAllUnixSockets bool `json:"allowAllUnixSockets,omitempty"`
+	// AllowLocalBinding allows binding to localhost ports (macOS only).
+	AllowLocalBinding bool `json:"allowLocalBinding,omitempty"`
+	// HTTPProxyPort is the HTTP proxy port if bringing your own proxy.
+	HTTPProxyPort int `json:"httpProxyPort,omitempty"`
+	// SOCKSProxyPort is the SOCKS5 proxy port if bringing your own proxy.
+	SOCKSProxyPort int `json:"socksProxyPort,omitempty"`
+}
+
+// SandboxIgnoreViolations specifies violations to ignore in sandbox.
+type SandboxIgnoreViolations struct {
+	// File is a list of file paths for which violations should be ignored.
+	File []string `json:"file,omitempty"`
+	// Network is a list of network hosts for which violations should be ignored.
+	Network []string `json:"network,omitempty"`
+}
+
 // SandboxSettings configures process sandboxing for Bash tool commands.
-type SandboxSettings map[string]any
+//
+// Important: Filesystem and network restrictions are configured via permission
+// rules (Read/Edit for filesystem, WebFetch for network), not via these
+// sandbox settings — sandbox settings control sandbox behavior (enabled, auto-allow, etc.).
+//
+// See https://docs.anthropic.com/en/docs/claude-code/settings#sandbox-settings.
+type SandboxSettings struct {
+	// Enabled enables bash sandboxing (macOS/Linux only). Default: false.
+	Enabled bool `json:"enabled,omitempty"`
+	// AutoAllowBashIfSandboxed auto-approves bash commands when sandboxed. Default: true.
+	AutoAllowBashIfSandboxed *bool `json:"autoAllowBashIfSandboxed,omitempty"`
+	// ExcludedCommands lists commands that should run outside the sandbox (e.g., ["git", "docker"]).
+	ExcludedCommands []string `json:"excludedCommands,omitempty"`
+	// AllowUnsandboxedCommands allows commands to bypass sandbox via dangerouslyDisableSandbox.
+	// When false, all commands must run sandboxed (or be in ExcludedCommands). Default: true.
+	AllowUnsandboxedCommands *bool `json:"allowUnsandboxedCommands,omitempty"`
+	// Network is the network configuration for sandbox.
+	Network *SandboxNetworkConfig `json:"network,omitempty"`
+	// IgnoreViolations specifies violations to ignore.
+	IgnoreViolations *SandboxIgnoreViolations `json:"ignoreViolations,omitempty"`
+	// EnableWeakerNestedSandbox enables weaker sandbox for unprivileged Docker environments
+	// (Linux only). Reduces security. Default: false.
+	EnableWeakerNestedSandbox bool `json:"enableWeakerNestedSandbox,omitempty"`
+}
 
 // SystemPromptPreset selects a built-in system prompt.
 type SystemPromptPreset struct {
-	Type                    string `json:"type"`   // "preset"
-	Preset                  string `json:"preset"` // "claude_code"
-	Append                  string `json:"append,omitempty"`
-	ExcludeDynamicSections  *bool  `json:"excludeDynamicSections,omitempty"`
+	Type                   string `json:"type"`   // "preset"
+	Preset                 string `json:"preset"` // "claude_code"
+	Append                 string `json:"append,omitempty"`
+	ExcludeDynamicSections *bool  `json:"excludeDynamicSections,omitempty"`
 }
 
 // SystemPromptFile loads the system prompt from a file.
@@ -523,140 +570,266 @@ type OutputFormat map[string]any
 // ClaudeAgentOptions configures a query or streaming client session.
 // Zero values are safe defaults.
 type ClaudeAgentOptions struct {
-	// Tools specifies the base tool set: nil = default, []string = explicit list,
-	// *ToolsPreset = preset.
+	// Tools specifies the base set of available built-in tools.
+	//
+	//   - []string — Specific tool names (e.g. ["Bash", "Read", "Edit"]).
+	//   - []string{} (empty slice) — Disable all built-in tools.
+	//   - *ToolsPreset — Use all default Claude Code tools.
+	//
+	// To restrict which tools the model may call without being prompted, use
+	// AllowedTools instead.
 	Tools any // nil | []string | *ToolsPreset
 
-	// AllowedTools is the list of additional tools to allow.
+	// AllowedTools lists tool names that are auto-allowed without prompting
+	// for permission. These tools execute automatically without asking the
+	// user for approval. To restrict which tools are available at all, use
+	// Tools.
 	AllowedTools []string
 
-	// DisallowedTools is the list of tools to disallow.
+	// DisallowedTools lists tool names that are disallowed. These tools are
+	// removed from the model's context and cannot be used, even if they
+	// would otherwise be allowed.
 	DisallowedTools []string
 
-	// SystemPrompt is either a plain string, *SystemPromptPreset, or *SystemPromptFile.
+	// SystemPrompt configures the system prompt.
+	//
+	//   - string — Use a custom system prompt.
+	//   - *SystemPromptPreset — Use Claude Code's default system prompt.
+	//     Set Append to add instructions after the default prompt.
+	//   - *SystemPromptFile — Load the system prompt from a file.
 	SystemPrompt any // nil | string | *SystemPromptPreset | *SystemPromptFile
 
-	// MCPServers maps server names to their config.
-	// Values may be *MCPStdioServerConfig, *MCPSSEServerConfig,
-	// *MCPHTTPServerConfig, or *MCPSdkServerConfig.
+	// MCPServers maps server names to their MCP (Model Context Protocol)
+	// server configurations. Values may be *MCPStdioServerConfig,
+	// *MCPSSEServerConfig, *MCPHTTPServerConfig, or *MCPSdkServerConfig.
 	MCPServers map[string]MCPServerConfig
 
-	// MCPConfigPath is a file-system path to a JSON MCP config file.
-	// When set it is passed as-is to --mcp-config, taking precedence over MCPServers.
+	// MCPConfigPath is a file-system path to a JSON MCP config file. When
+	// set it is passed as-is to --mcp-config, taking precedence over
+	// MCPServers.
 	MCPConfigPath string
 
-	// PermissionMode controls how permission prompts are handled.
+	// PermissionMode controls how permission prompts are handled for the session.
+	//
+	//   - PermissionModeDefault — Standard behavior; prompts for dangerous operations.
+	//   - PermissionModeAcceptEdits — Auto-accept file edit operations.
+	//   - PermissionModeBypassPermissions — Bypass all permission checks.
+	//   - PermissionModePlan — Planning mode, no execution of tools.
+	//   - PermissionModeDontAsk — Don't prompt; deny if not pre-approved.
+	//   - PermissionModeAuto — Automatic permission handling.
 	PermissionMode PermissionMode
 
-	// ContinueConversation resumes the most recent session.
+	// ContinueConversation resumes the most recent conversation in the
+	// current directory instead of starting a new one. Mutually exclusive
+	// with Resume.
 	ContinueConversation bool
 
-	// Resume specifies a session ID to resume.
+	// Resume specifies a session ID to resume. Loads the conversation
+	// history from the specified session.
 	Resume string
 
-	// SessionID specifies a custom session ID.
+	// SessionID specifies a custom session ID for the conversation instead
+	// of an auto-generated one. Must be a valid UUID. Cannot be used with
+	// ContinueConversation or Resume unless ForkSession is also set.
 	SessionID string
 
-	// MaxTurns limits the number of conversation turns (0 = unlimited).
+	// MaxTurns limits the number of conversation turns before the query
+	// stops. A turn consists of a user message and assistant response.
+	// Zero means unlimited.
 	MaxTurns int
 
-	// MaxBudgetUSD stops the session when the cost exceeds this threshold.
+	// MaxBudgetUSD stops the session when the cost exceeds this threshold
+	// (in USD), returning an error_max_budget_usd result.
 	MaxBudgetUSD *float64
 
-	// Model selects the Claude model.
+	// Model selects the Claude model. Defaults to the CLI default model.
+	// Examples: "claude-sonnet-4-5", "claude-opus-4-5".
 	Model string
 
-	// FallbackModel is used when the primary model is unavailable.
+	// FallbackModel is the model to use if the primary model fails or is
+	// unavailable.
 	FallbackModel string
 
-	// Betas enables SDK beta features.
+	// Betas enables SDK beta features. Currently supported:
+	//
+	//   - SdkBetaContext1M ("context-1m-2025-08-07") — Enable 1M token
+	//     context window (Sonnet 4/4.5 only).
+	//
+	// See https://docs.anthropic.com/en/api/beta-headers.
 	Betas []SdkBeta
 
-	// PermissionPromptToolName overrides the permission prompt tool name.
-	// Mutually exclusive with CanUseTool.
+	// PermissionPromptToolName overrides the MCP tool name used for
+	// permission prompts. When set, permission requests are routed through
+	// this MCP tool instead of the default handler. Mutually exclusive
+	// with CanUseTool.
 	PermissionPromptToolName string
 
-	// CWD sets the working directory for the CLI subprocess.
+	// CWD sets the working directory for the CLI subprocess. Defaults to
+	// the process cwd.
 	CWD string
 
-	// CLIPath overrides the path to the claude binary.
+	// CLIPath overrides the path to the Claude Code CLI executable. Uses
+	// the bundled executable if not specified.
 	CLIPath string
 
-	// Settings is a JSON string or file path for the settings file.
+	// Settings is a path to an additional settings JSON file to load.
+	// These are loaded into the "flag settings" layer, which has the
+	// highest priority among user-controlled settings. Equivalent to the
+	// --settings CLI flag.
 	Settings string
 
-	// AddDirs adds directories to the allowed-read list.
+	// AddDirs adds directories to the allowed-read list. Paths should be
+	// absolute.
 	AddDirs []string
 
-	// Env merges extra environment variables into the subprocess environment.
+	// Env merges extra environment variables into the subprocess
+	// environment. SDK consumers can identify their app/library in the
+	// User-Agent header by setting CLAUDE_AGENT_SDK_CLIENT_APP
+	// (e.g. "my-app/1.0.0").
 	Env map[string]string
 
-	// ExtraArgs passes additional --flag [value] pairs to the CLI.
-	// A nil value means a boolean flag (no value argument).
+	// ExtraArgs passes additional --flag [value] pairs to the CLI. Keys
+	// are argument names (without --), values are argument values. A nil
+	// value means a boolean flag (no value argument).
 	ExtraArgs map[string]*string
 
-	// MaxBufferSize limits the internal read buffer (0 = default 1 MB).
+	// MaxBufferSize limits the maximum bytes to buffer when reading the CLI
+	// subprocess stdout. Zero means default (1 MB).
 	MaxBufferSize int
 
-	// Stderr is called for each line of stderr output from the CLI.
+	// Stderr is called for each line of stderr output from the CLI
+	// subprocess. Useful for debugging and logging.
 	Stderr func(line string)
 
-	// CanUseTool is called for each tool-use permission request.
+	// CanUseTool is called for each tool-use permission request to
+	// determine if it should be allowed, denied, or prompt the user.
 	// Requires an async-iterable (channel) prompt; mutually exclusive
 	// with PermissionPromptToolName.
 	CanUseTool CanUseTool
 
-	// Hooks registers event callbacks keyed by HookEvent.
+	// Hooks registers event callbacks keyed by HookEvent. Hooks can
+	// modify behavior, add context, or implement custom logic.
+	// See https://docs.anthropic.com/en/docs/claude-code/hooks.
 	Hooks map[HookEvent][]HookMatcher
 
-	// User is the OS user to run the CLI subprocess as (Linux/macOS only).
+	// User is an optional user identifier associated with the session
+	// (Linux/macOS only).
 	User string
 
-	// IncludePartialMessages enables StreamEvent messages during streaming.
+	// IncludePartialMessages enables partial/streaming message events in
+	// the output. When true, StreamEvent messages are emitted during
+	// streaming.
 	IncludePartialMessages bool
 
 	// ForkSession forks the session on resume instead of continuing it.
+	// Use with Resume.
 	ForkSession bool
 
-	// Agents defines additional sub-agents passed via the initialize request.
+	// Agents programmatically defines custom sub-agents invokable via the
+	// Agent tool. Keys are agent names, values are agent definitions.
 	Agents map[string]AgentDefinition
 
-	// SettingSources selects which settings tiers are loaded by the CLI.
+	// SettingSources controls which filesystem settings the CLI loads.
+	//
+	//   - SettingSourceUser — Global user settings (~/.claude/settings.json).
+	//   - SettingSourceProject — Project settings (.claude/settings.json).
+	//   - SettingSourceLocal — Local settings (.claude/settings.local.json).
+	//
+	// When nil, all sources are loaded (matches CLI defaults). Pass an
+	// empty slice to disable filesystem settings (SDK isolation mode).
+	// Must include "project" to load CLAUDE.md files.
 	SettingSources []SettingSource
 
-	// Sandbox configures process sandboxing merged into the settings JSON.
-	Sandbox SandboxSettings
+	// Sandbox configures process sandboxing for Bash command execution.
+	// When enabled, commands execute in a sandboxed environment. Filesystem
+	// and network restrictions are configured via permission rules, not via
+	// these sandbox settings — sandbox settings control sandbox behavior
+	// (enabled, auto-allow, etc.).
+	//
+	// See https://docs.anthropic.com/en/docs/claude-code/settings#sandbox-settings.
+	Sandbox *SandboxSettings
 
-	// Plugins lists local plugin directories.
+	// Plugins loads local plugin directories for this session. Plugins
+	// provide custom commands, agents, skills, and hooks that extend
+	// Claude Code's capabilities.
 	Plugins []SdkPluginConfig
 
-	// MaxThinkingTokens is deprecated; use Thinking instead.
+	// MaxThinkingTokens is the maximum tokens the model may use for its
+	// thinking/reasoning process.
+	//
+	// Deprecated: Use Thinking instead. On newer models, this is treated
+	// as on/off (0 = disabled, any other value = adaptive). For explicit
+	// control, use ThinkingAdaptive or ThinkingEnabled.
 	MaxThinkingTokens *int
 
-	// Thinking controls extended-thinking behaviour.
-	// Takes precedence over MaxThinkingTokens.
+	// Thinking controls Claude's thinking/reasoning behavior. Takes
+	// precedence over MaxThinkingTokens.
+	//
+	//   - *ThinkingAdaptive — Claude decides when and how much to think
+	//     (Opus 4.6+). Default for models that support it.
+	//   - *ThinkingEnabled — Fixed thinking token budget (older models).
+	//   - *ThinkingDisabled — No extended thinking.
+	//
+	// See https://docs.anthropic.com/en/docs/build-with-claude/adaptive-thinking.
 	Thinking ThinkingConfig
 
-	// Effort sets the reasoning depth.
+	// Effort controls how much effort Claude puts into its response.
+	// Works with adaptive thinking to guide thinking depth.
+	//
+	//   - EffortLow — Minimal thinking, fastest responses.
+	//   - EffortMedium — Moderate thinking.
+	//   - EffortHigh — Deep reasoning (default).
+	//   - EffortMax — Maximum effort.
+	//
+	// See https://docs.anthropic.com/en/docs/build-with-claude/effort.
 	Effort EffortLevel
 
-	// OutputFormat specifies structured output format (e.g. JSON Schema).
+	// OutputFormat specifies structured output format. When set, the agent
+	// returns structured data matching the schema. Example:
+	// OutputFormat{"type": "json_schema", "schema": map[string]any{...}}.
 	OutputFormat OutputFormat
 
-	// EnableFileCheckpointing enables file rewind functionality.
+	// EnableFileCheckpointing enables file checkpointing to track file
+	// changes during the session. When enabled, files can be rewound to
+	// their state at any user message using ClaudeSDKClient.RewindFiles().
 	EnableFileCheckpointing bool
 
-	// TaskBudget sets an API-side token budget for the task.
+	// TaskBudget sets an API-side task budget in tokens. When set, the
+	// model is made aware of its remaining token budget so it can pace
+	// tool use and wrap up before the limit. Sent as output_config.task_budget
+	// with the task-budgets-2026-03-13 beta header.
 	TaskBudget *TaskBudget
 
-	// Skills enables specific skills for the session.
-	// nil = no SDK auto-config; "all" = enable all; []string = specific skills.
+	// Skills enables specific skills for the main session. This is the
+	// single place to turn skills on; you do not need to add "Skill" to
+	// AllowedTools or set SettingSources yourself — the SDK does both
+	// when this is set.
+	//
+	//   - nil (default): no SDK auto-configuration. The CLI's own defaults
+	//     still apply, so this is NOT "skills off" — to suppress every
+	//     skill from the listing, use []string{}.
+	//   - "all": enable every discovered skill.
+	//   - []string: enable only the listed skills. Names match the
+	//     SKILL.md name / directory name, or plugin:skill for
+	//     plugin-qualified skills.
+	//
+	// This is a context filter, not a sandbox: unlisted skills are hidden
+	// from the model's listing and rejected by the Skill tool, but their
+	// files remain on disk and are reachable via Read/Bash. Do not store
+	// secrets in skill files.
 	Skills any // nil | "all" | []string
 
-	// SessionStore mirrors session transcripts to an external store.
+	// SessionStore mirrors session transcripts to an external store. When
+	// set, every transcript line written locally is also passed to
+	// SessionStore.Append(), and Resume can materialize from the store
+	// when the local file is absent.
 	SessionStore SessionStore
 
-	// LoadTimeoutMs is the timeout for SessionStore load calls during resume.
+	// LoadTimeoutMs is the timeout for each SessionStore.Load() /
+	// ListSubkeys() call during resume materialization, in milliseconds.
+	// If the adapter doesn't settle within this window the query fails
+	// with a clear error instead of hanging forever. Zero means default
+	// (60000ms); use a large value to effectively disable.
 	LoadTimeoutMs int
 }
 
@@ -673,9 +846,9 @@ type SessionKey struct {
 
 // SessionStoreEntry represents one JSONL transcript line in a store.
 type SessionStoreEntry struct {
-	Type      string         `json:"type"`
-	UUID      string         `json:"uuid,omitempty"`
-	Timestamp string         `json:"timestamp,omitempty"`
+	Type      string `json:"type"`
+	UUID      string `json:"uuid,omitempty"`
+	Timestamp string `json:"timestamp,omitempty"`
 	// Additional fields are opaque JSON.
 	Extra map[string]any `json:"-"`
 }

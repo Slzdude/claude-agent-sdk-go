@@ -230,13 +230,14 @@ func (t *cliTransport) buildCommand() []string {
 	if opts.SessionStore != nil {
 		cmd = append(cmd, "--session-mirror")
 	}
-	// --setting-sources only when non-empty (Python SDK v0.1.53 fix)
-	if len(effectiveSettingSources) > 0 {
+	// --setting-sources: emit if non-nil (even empty slice disables all sources).
+	// Matches Python SDK v0.1.53+ behaviour: `if effective_setting_sources is not None`.
+	if effectiveSettingSources != nil {
 		sourceParts := make([]string, len(effectiveSettingSources))
 		for i, s := range effectiveSettingSources {
 			sourceParts[i] = string(s)
 		}
-		cmd = append(cmd, "--setting-sources", strings.Join(sourceParts, ","))
+		cmd = append(cmd, "--setting-sources="+strings.Join(sourceParts, ","))
 	}
 	for _, p := range opts.Plugins {
 		if p.Type == "local" {
@@ -289,7 +290,7 @@ func (t *cliTransport) buildCommand() []string {
 
 func (t *cliTransport) buildSettingsValue() string {
 	opts := t.opts
-	hasSandbox := len(opts.Sandbox) > 0
+	hasSandbox := opts.Sandbox != nil
 	if opts.Settings == "" && !hasSandbox {
 		return ""
 	}
@@ -306,7 +307,7 @@ func (t *cliTransport) buildSettingsValue() string {
 		}
 	}
 	if hasSandbox {
-		obj["sandbox"] = map[string]any(opts.Sandbox)
+		obj["sandbox"] = opts.Sandbox
 	}
 	b, _ := json.Marshal(obj)
 	return string(b)
@@ -340,15 +341,17 @@ func (t *cliTransport) connect(ctx context.Context) error {
 	if t.opts.EnableFileCheckpointing {
 		env = append(env, "CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=true")
 	}
-	// Propagate W3C trace context (TRACEPARENT/TRACESTATE) if present.
-	if tp := os.Getenv("TRACEPARENT"); tp != "" {
-		if _, exists := t.opts.Env["TRACEPARENT"]; !exists {
-			env = append(env, "TRACEPARENT="+tp)
-		}
-		if ts := os.Getenv("TRACESTATE"); ts != "" {
-			if _, exists := t.opts.Env["TRACESTATE"]; !exists {
-				env = append(env, "TRACESTATE="+ts)
-			}
+	// Propagate W3C trace context (TRACEPARENT/TRACESTATE).
+	// Uses OTEL SDK if available, otherwise forwards from process env.
+	// Matches Python SDK's opentelemetry.propagate.inject() behavior.
+	otelEnv := make(map[string]string)
+	for k, v := range t.opts.Env {
+		otelEnv[k] = v
+	}
+	injectTraceContext(otelEnv)
+	for _, key := range []string{"TRACEPARENT", "TRACESTATE"} {
+		if v, ok := otelEnv[key]; ok {
+			env = append(env, key+"="+v)
 		}
 	}
 	if t.cwd != "" {
@@ -369,9 +372,9 @@ func (t *cliTransport) connect(ctx context.Context) error {
 		return &CLIConnectionError{Message: "failed to create stdout pipe", Cause: err}
 	}
 
+	// Pipe stderr only when the caller registered a callback.
 	var stderrPipe io.ReadCloser
-	_, hasDebugStderr := t.opts.ExtraArgs["debug-to-stderr"]
-	if t.opts.Stderr != nil || hasDebugStderr {
+	if t.opts.Stderr != nil {
 		stderrPipe, err = t.cmd.StderrPipe()
 		if err != nil {
 			return &CLIConnectionError{Message: "failed to create stderr pipe", Cause: err}
