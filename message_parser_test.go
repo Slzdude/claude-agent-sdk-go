@@ -551,6 +551,90 @@ func TestParseRateLimitEvent_MissingInfo(t *testing.T) {
 	}
 }
 
+func TestParseServerToolUseBlock(t *testing.T) {
+	raw := map[string]any{
+		"type": "assistant",
+		"message": map[string]any{
+			"role": "assistant",
+			"content": []any{
+				map[string]any{
+					"type":  "server_tool_use",
+					"id":    "stu_123",
+					"name":  "web_search",
+					"input": map[string]any{"query": "test"},
+				},
+				map[string]any{"type": "text", "text": "result"},
+			},
+		},
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	am := msg.(*AssistantMessage)
+	if len(am.Content) != 2 {
+		t.Fatalf("expected 2 content blocks, got %d", len(am.Content))
+	}
+	stu, ok := am.Content[0].(*ServerToolUseBlock)
+	if !ok {
+		t.Fatalf("expected *ServerToolUseBlock, got %T", am.Content[0])
+	}
+	if stu.Name != ServerToolWebSearch {
+		t.Errorf("wrong name: %q", stu.Name)
+	}
+	if stu.ID != "stu_123" {
+		t.Errorf("wrong ID: %q", stu.ID)
+	}
+}
+
+func TestParseServerToolResultBlock(t *testing.T) {
+	raw := map[string]any{
+		"type": "assistant",
+		"message": map[string]any{
+			"role": "assistant",
+			"content": []any{
+				map[string]any{
+					"type":        "advisor_tool_result",
+					"tool_use_id": "stu_123",
+					"content":     map[string]any{"type": "text", "text": "advice"},
+				},
+			},
+		},
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	am := msg.(*AssistantMessage)
+	tr, ok := am.Content[0].(*ServerToolResultBlock)
+	if !ok {
+		t.Fatalf("expected *ServerToolResultBlock, got %T", am.Content[0])
+	}
+	if tr.ToolUseID != "stu_123" {
+		t.Errorf("wrong tool_use_id: %q", tr.ToolUseID)
+	}
+}
+
+func TestParseMirrorErrorMessage(t *testing.T) {
+	raw := map[string]any{
+		"type":       "system",
+		"subtype":    "mirror_error",
+		"error":      "connection timeout",
+		"session_id": "sess-1",
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	me, ok := msg.(*MirrorErrorMessage)
+	if !ok {
+		t.Fatalf("expected *MirrorErrorMessage, got %T", msg)
+	}
+	if me.Error != "connection timeout" {
+		t.Errorf("wrong error: %q", me.Error)
+	}
+}
+
 func TestAgentDefinition_NewFields(t *testing.T) {
 	maxTurns := 10
 	bg := true

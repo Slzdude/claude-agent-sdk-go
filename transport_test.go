@@ -606,3 +606,75 @@ func TestConnect_EnvFiltering(t *testing.T) {
 }
 
 func boolPtr(b bool) *bool { return &b }
+
+// TestBuildCommand_ThinkingDisplay verifies --thinking-display flag.
+func TestBuildCommand_ThinkingDisplay(t *testing.T) {
+	cmd := buildCmd(&ClaudeAgentOptions{
+		Thinking: &ThinkingAdaptive{Display: ThinkingDisplaySummarized},
+	})
+	if flagValue(cmd, "--thinking-display") != "summarized" {
+		t.Errorf("wrong --thinking-display: %q", flagValue(cmd, "--thinking-display"))
+	}
+}
+
+// TestBuildCommand_ThinkingDisplayEnabled verifies --thinking-display with enabled.
+func TestBuildCommand_ThinkingDisplayEnabled(t *testing.T) {
+	cmd := buildCmd(&ClaudeAgentOptions{
+		Thinking: &ThinkingEnabled{BudgetTokens: 10000, Display: ThinkingDisplayOmitted},
+	})
+	if flagValue(cmd, "--thinking-display") != "omitted" {
+		t.Errorf("wrong --thinking-display: %q", flagValue(cmd, "--thinking-display"))
+	}
+	if flagValue(cmd, "--max-thinking-tokens") != "10000" {
+		t.Errorf("wrong --max-thinking-tokens: %q", flagValue(cmd, "--max-thinking-tokens"))
+	}
+}
+
+// TestBuildCommand_SkillsAll verifies --allowedTools includes Skill for "all".
+func TestBuildCommand_SkillsAll(t *testing.T) {
+	cmd := buildCmd(&ClaudeAgentOptions{Skills: "all"})
+	if !hasFlag(cmd, "--allowedTools") {
+		t.Fatal("--allowedTools missing")
+	}
+	val := flagValue(cmd, "--allowedTools")
+	if val != "Skill" {
+		t.Errorf("expected 'Skill' in --allowedTools, got %q", val)
+	}
+}
+
+// TestBuildCommand_SkillsList verifies --allowedTools includes Skill(name) for list.
+func TestBuildCommand_SkillsList(t *testing.T) {
+	cmd := buildCmd(&ClaudeAgentOptions{Skills: []string{"coding", "testing"}})
+	val := flagValue(cmd, "--allowedTools")
+	if !strings.Contains(val, "Skill(coding)") || !strings.Contains(val, "Skill(testing)") {
+		t.Errorf("expected Skill(coding) and Skill(testing) in --allowedTools, got %q", val)
+	}
+	// Should also set default setting_sources.
+	if !hasFlag(cmd, "--setting-sources") {
+		t.Error("--setting-sources should be set when skills is configured")
+	}
+}
+
+// TestBuildCommand_SessionMirror verifies --session-mirror flag.
+func TestBuildCommand_SessionMirror(t *testing.T) {
+	cmd := buildCmd(&ClaudeAgentOptions{SessionStore: &noopSessionStore{}})
+	if !hasFlag(cmd, "--session-mirror") {
+		t.Error("--session-mirror missing")
+	}
+}
+
+// noopSessionStore is a minimal SessionStore for testing.
+type noopSessionStore struct{}
+
+func (s *noopSessionStore) Append(key SessionKey, entries []SessionStoreEntry) error { return nil }
+func (s *noopSessionStore) Load(key SessionKey) ([]SessionStoreEntry, error)        { return nil, nil }
+func (s *noopSessionStore) ListSessions(projectKey string) ([]SessionStoreListEntry, error) {
+	return nil, nil
+}
+func (s *noopSessionStore) ListSessionSummaries(projectKey string) ([]SessionSummaryEntry, error) {
+	return nil, nil
+}
+func (s *noopSessionStore) Delete(key SessionKey) error                        { return nil }
+func (s *noopSessionStore) ListSubkeys(projectKey, sessionID string) ([]string, error) {
+	return nil, nil
+}

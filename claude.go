@@ -126,6 +126,9 @@ func NewClaudeSDKClient(ctx context.Context, opts *ClaudeAgentOptions) (*ClaudeS
 	if sp, ok := configuredOpts.SystemPrompt.(*SystemPromptPreset); ok && sp.ExcludeDynamicSections != nil {
 		q.SetExcludeDynamicSections(sp.ExcludeDynamicSections)
 	}
+	if configuredOpts.Skills != nil {
+		q.SetSkills(configuredOpts.Skills)
+	}
 
 	client := &ClaudeSDKClient{
 		opts:      &configuredOpts,

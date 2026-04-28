@@ -76,12 +76,20 @@ func parseMessage(raw map[string]any) (Message, error) {
 	}
 }
 
-func parseSystemMessage(raw map[string]any) (*SystemMessage, error) {
-	m := &SystemMessage{
-		Subtype: strVal(raw, "subtype"),
-		Data:    raw,
+func parseSystemMessage(raw map[string]any) (Message, error) {
+	subtype := strVal(raw, "subtype")
+	switch subtype {
+	case "mirror_error":
+		return &MirrorErrorMessage{
+			SystemMessage: SystemMessage{Subtype: subtype, Data: raw},
+			Error:         strVal(raw, "error"),
+		}, nil
+	default:
+		return &SystemMessage{
+			Subtype: subtype,
+			Data:    raw,
+		}, nil
 	}
-	return m, nil
 }
 
 func parseUserMessage(raw map[string]any) (*UserMessage, error) {
@@ -287,6 +295,23 @@ func parseContentBlock(raw map[string]any) (ContentBlock, error) {
 					tr.Content = strVal(obj, "text")
 				}
 			}
+		}
+		return tr, nil
+	case "server_tool_use":
+		b := &ServerToolUseBlock{
+			ID:   strVal(raw, "id"),
+			Name: ServerToolName(strVal(raw, "name")),
+		}
+		if inp, ok := raw["input"].(map[string]any); ok {
+			b.Input = inp
+		}
+		return b, nil
+	case "advisor_tool_result":
+		tr := &ServerToolResultBlock{
+			ToolUseID: strVal(raw, "tool_use_id"),
+		}
+		if c, ok := raw["content"].(map[string]any); ok {
+			tr.Content = c
 		}
 		return tr, nil
 	default:

@@ -183,6 +183,37 @@ type ToolResultBlock struct {
 
 func (b *ToolResultBlock) contentBlockType() string { return "tool_result" }
 
+// ServerToolName identifies server-side tools executed by the API.
+type ServerToolName string
+
+const (
+	ServerToolAdvisor               ServerToolName = "advisor"
+	ServerToolWebSearch             ServerToolName = "web_search"
+	ServerToolWebFetch              ServerToolName = "web_fetch"
+	ServerToolCodeExecution         ServerToolName = "code_execution"
+	ServerToolBashCodeExecution     ServerToolName = "bash_code_execution"
+	ServerToolTextEditorCodeExec    ServerToolName = "text_editor_code_execution"
+	ServerToolSearchToolRegex       ServerToolName = "tool_search_tool_regex"
+	ServerToolSearchToolBM25        ServerToolName = "tool_search_tool_bm25"
+)
+
+// ServerToolUseBlock represents a server-side tool invocation (e.g. advisor, web_search).
+type ServerToolUseBlock struct {
+	ID    string         `json:"id"`
+	Name  ServerToolName `json:"name"`
+	Input map[string]any `json:"input"`
+}
+
+func (b *ServerToolUseBlock) contentBlockType() string { return "server_tool_use" }
+
+// ServerToolResultBlock carries the result of a server-side tool call.
+type ServerToolResultBlock struct {
+	ToolUseID string         `json:"tool_use_id"`
+	Content   map[string]any `json:"content"`
+}
+
+func (b *ServerToolResultBlock) contentBlockType() string { return "advisor_tool_result" }
+
 // -----------------------------------------------------------------------
 // Message types
 // -----------------------------------------------------------------------
@@ -289,6 +320,15 @@ type TaskNotificationMessage struct {
 	ToolUseID  string                 `json:"tool_use_id,omitempty"`
 	Usage      *TaskUsage             `json:"usage,omitempty"`
 }
+
+// MirrorErrorMessage is emitted when a SessionStore.append call fails.
+type MirrorErrorMessage struct {
+	SystemMessage
+	Key   *SessionKey `json:"key,omitempty"`
+	Error string      `json:"error,omitempty"`
+}
+
+func (m *MirrorErrorMessage) messageType() string { return "mirror_error" }
 
 // ResultMessage is the final message from a query.
 type ResultMessage struct {
@@ -405,19 +445,30 @@ type ContextUsageResponse struct {
 // Thinking and Sandbox config
 // -----------------------------------------------------------------------
 
+// ThinkingDisplay controls whether thinking text is returned summarized or omitted.
+type ThinkingDisplay string
+
+const (
+	ThinkingDisplaySummarized ThinkingDisplay = "summarized"
+	ThinkingDisplayOmitted    ThinkingDisplay = "omitted"
+)
+
 // ThinkingConfig controls extended-thinking behaviour.
 type ThinkingConfig interface {
 	thinkingType() string
 }
 
 // ThinkingAdaptive enables adaptive thinking (SDK chooses budget automatically).
-type ThinkingAdaptive struct{}
+type ThinkingAdaptive struct {
+	Display ThinkingDisplay `json:"display,omitempty"` // "summarized" or "omitted"
+}
 
 func (t *ThinkingAdaptive) thinkingType() string { return "adaptive" }
 
 // ThinkingEnabled enables thinking with an explicit token budget.
 type ThinkingEnabled struct {
-	BudgetTokens int `json:"budget_tokens"`
+	BudgetTokens int             `json:"budget_tokens"`
+	Display      ThinkingDisplay `json:"display,omitempty"` // "summarized" or "omitted"
 }
 
 func (t *ThinkingEnabled) thinkingType() string { return "enabled" }
@@ -597,6 +648,65 @@ type ClaudeAgentOptions struct {
 
 	// TaskBudget sets an API-side token budget for the task.
 	TaskBudget *TaskBudget
+
+	// Skills enables specific skills for the session.
+	// nil = no SDK auto-config; "all" = enable all; []string = specific skills.
+	Skills any // nil | "all" | []string
+
+	// SessionStore mirrors session transcripts to an external store.
+	SessionStore SessionStore
+
+	// LoadTimeoutMs is the timeout for SessionStore load calls during resume.
+	LoadTimeoutMs int
+}
+
+// -----------------------------------------------------------------------
+// Session Store types
+// -----------------------------------------------------------------------
+
+// SessionKey identifies a session transcript in a store.
+type SessionKey struct {
+	ProjectKey string `json:"project_key"`
+	SessionID  string `json:"session_id"`
+	Subpath    string `json:"subpath,omitempty"` // Omit for main transcript
+}
+
+// SessionStoreEntry represents one JSONL transcript line in a store.
+type SessionStoreEntry struct {
+	Type      string         `json:"type"`
+	UUID      string         `json:"uuid,omitempty"`
+	Timestamp string         `json:"timestamp,omitempty"`
+	// Additional fields are opaque JSON.
+	Extra map[string]any `json:"-"`
+}
+
+// SessionStoreListEntry is returned by SessionStore.ListSessions.
+type SessionStoreListEntry struct {
+	SessionID string `json:"session_id"`
+	Mtime     int64  `json:"mtime"` // Unix epoch milliseconds
+}
+
+// SessionSummaryEntry is an incrementally-maintained session summary.
+type SessionSummaryEntry struct {
+	SessionID string         `json:"session_id"`
+	Mtime     int64          `json:"mtime"`
+	Data      map[string]any `json:"data"`
+}
+
+// SessionStore is an adapter for mirroring session transcripts to external storage.
+type SessionStore interface {
+	// Append mirrors a batch of transcript entries.
+	Append(key SessionKey, entries []SessionStoreEntry) error
+	// Load loads a full session for resume. Returns nil if not found.
+	Load(key SessionKey) ([]SessionStoreEntry, error)
+	// ListSessions lists sessions for a project key. Optional.
+	ListSessions(projectKey string) ([]SessionStoreListEntry, error)
+	// ListSessionSummaries returns summaries for all sessions. Optional.
+	ListSessionSummaries(projectKey string) ([]SessionSummaryEntry, error)
+	// Delete deletes a session. Optional.
+	Delete(key SessionKey) error
+	// ListSubkeys lists subpath keys under a session. Optional.
+	ListSubkeys(projectKey, sessionID string) ([]string, error)
 }
 
 // -----------------------------------------------------------------------

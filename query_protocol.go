@@ -44,6 +44,9 @@ type queryProto struct {
 
 	// excludeDynamicSections is sent in the initialize request when set.
 	excludeDynamicSections *bool
+
+	// skills is sent in the initialize request when set.
+	skills any // nil | "all" | []string
 }
 
 type controlResult struct {
@@ -73,6 +76,10 @@ func (q *queryProto) SetAgents(agents map[string]map[string]any) {
 
 func (q *queryProto) SetExcludeDynamicSections(v *bool) {
 	q.excludeDynamicSections = v
+}
+
+func (q *queryProto) SetSkills(s any) {
+	q.skills = s
 }
 
 // GetContextUsage sends a get_context_usage control request and returns the raw response.
@@ -148,6 +155,10 @@ func (q *queryProto) Initialize(ctx context.Context) (map[string]any, error) {
 	}
 	if q.excludeDynamicSections != nil {
 		reqPayload["excludeDynamicSections"] = *q.excludeDynamicSections
+	}
+	// 'all' and omitted are equivalent (no filter), so only send when explicit list.
+	if skills, ok := q.skills.([]string); ok {
+		reqPayload["skills"] = skills
 	}
 
 	resp, err := q.SendControlRequest(ctx, reqPayload, 30*time.Second)

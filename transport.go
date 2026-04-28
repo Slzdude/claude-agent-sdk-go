@@ -128,8 +128,32 @@ func (t *cliTransport) buildCommand() []string {
 		cmd = append(cmd, "--tools", "default")
 	}
 
-	if len(opts.AllowedTools) > 0 {
-		cmd = append(cmd, "--allowedTools", strings.Join(opts.AllowedTools, ","))
+	// Apply skills defaults: inject Skill tool and default setting_sources.
+	effectiveAllowedTools := append([]string{}, opts.AllowedTools...)
+	effectiveSettingSources := opts.SettingSources
+	if opts.Skills != nil {
+		switch s := opts.Skills.(type) {
+		case string:
+			if s == "all" {
+				if !contains(effectiveAllowedTools, "Skill") {
+					effectiveAllowedTools = append(effectiveAllowedTools, "Skill")
+				}
+			}
+		case []string:
+			for _, name := range s {
+				pattern := "Skill(" + name + ")"
+				if !contains(effectiveAllowedTools, pattern) {
+					effectiveAllowedTools = append(effectiveAllowedTools, pattern)
+				}
+			}
+		}
+		if effectiveSettingSources == nil {
+			effectiveSettingSources = []SettingSource{SettingSourceUser, SettingSourceProject}
+		}
+	}
+
+	if len(effectiveAllowedTools) > 0 {
+		cmd = append(cmd, "--allowedTools", strings.Join(effectiveAllowedTools, ","))
 	}
 	if opts.MaxTurns > 0 {
 		cmd = append(cmd, "--max-turns", strconv.Itoa(opts.MaxTurns))
@@ -203,10 +227,13 @@ func (t *cliTransport) buildCommand() []string {
 	if opts.IncludePartialMessages {
 		cmd = append(cmd, "--include-partial-messages")
 	}
+	if opts.SessionStore != nil {
+		cmd = append(cmd, "--session-mirror")
+	}
 	// --setting-sources only when non-empty (Python SDK v0.1.53 fix)
-	if len(opts.SettingSources) > 0 {
-		sourceParts := make([]string, len(opts.SettingSources))
-		for i, s := range opts.SettingSources {
+	if len(effectiveSettingSources) > 0 {
+		sourceParts := make([]string, len(effectiveSettingSources))
+		for i, s := range effectiveSettingSources {
 			sourceParts[i] = string(s)
 		}
 		cmd = append(cmd, "--setting-sources", strings.Join(sourceParts, ","))
@@ -226,11 +253,17 @@ func (t *cliTransport) buildCommand() []string {
 
 	// Thinking — use --thinking flag for adaptive/disabled, --max-thinking-tokens for enabled.
 	if opts.Thinking != nil {
-		switch opts.Thinking.(type) {
+		switch t := opts.Thinking.(type) {
 		case *ThinkingAdaptive:
 			cmd = append(cmd, "--thinking", "adaptive")
+			if t.Display != "" {
+				cmd = append(cmd, "--thinking-display", string(t.Display))
+			}
 		case *ThinkingEnabled:
-			cmd = append(cmd, "--max-thinking-tokens", strconv.Itoa(opts.Thinking.(*ThinkingEnabled).BudgetTokens))
+			cmd = append(cmd, "--max-thinking-tokens", strconv.Itoa(t.BudgetTokens))
+			if t.Display != "" {
+				cmd = append(cmd, "--thinking-display", string(t.Display))
+			}
 		case *ThinkingDisabled:
 			cmd = append(cmd, "--thinking", "disabled")
 		}
@@ -306,6 +339,17 @@ func (t *cliTransport) connect(ctx context.Context) error {
 	env = append(env, "CLAUDE_AGENT_SDK_VERSION="+sdkVersion)
 	if t.opts.EnableFileCheckpointing {
 		env = append(env, "CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=true")
+	}
+	// Propagate W3C trace context (TRACEPARENT/TRACESTATE) if present.
+	if tp := os.Getenv("TRACEPARENT"); tp != "" {
+		if _, exists := t.opts.Env["TRACEPARENT"]; !exists {
+			env = append(env, "TRACEPARENT="+tp)
+		}
+		if ts := os.Getenv("TRACESTATE"); ts != "" {
+			if _, exists := t.opts.Env["TRACESTATE"]; !exists {
+				env = append(env, "TRACESTATE="+ts)
+			}
+		}
 	}
 	if t.cwd != "" {
 		env = append(env, "PWD="+t.cwd)
@@ -513,6 +557,15 @@ func versionAtLeast(actual, minimum string) bool {
 		}
 	}
 	return true
+}
+
+func contains(slice []string, s string) bool {
+	for _, v := range slice {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
 
 func appendIfMissing(env []string, entry string) []string {
