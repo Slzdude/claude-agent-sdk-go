@@ -4,7 +4,7 @@ package claude
 func parseMessage(raw map[string]any) (Message, error) {
 	t := strVal(raw, "type")
 	switch t {
-	case "system", "":
+	case "system":
 		return parseSystemMessage(raw)
 	case "user":
 		return parseUserMessage(raw)
@@ -12,21 +12,23 @@ func parseMessage(raw map[string]any) (Message, error) {
 		return parseAssistantMessage(raw)
 	case "task_started":
 		return &TaskStartedMessage{
-			TaskID:      strVal(raw, "task_id"),
-			Description: strVal(raw, "description"),
-			UUID:        strVal(raw, "uuid"),
-			SessionID:   strVal(raw, "session_id"),
-			ToolUseID:   strVal(raw, "tool_use_id"),
-			TaskType:    strVal(raw, "task_type"),
+			SystemMessage: SystemMessage{Subtype: "task_started", Data: raw},
+			TaskID:        strVal(raw, "task_id"),
+			Description:   strVal(raw, "description"),
+			UUID:          strVal(raw, "uuid"),
+			SessionID:     strVal(raw, "session_id"),
+			ToolUseID:     strVal(raw, "tool_use_id"),
+			TaskType:      strVal(raw, "task_type"),
 		}, nil
 	case "task_progress":
 		p := &TaskProgressMessage{
-			TaskID:       strVal(raw, "task_id"),
-			Description:  strVal(raw, "description"),
-			UUID:         strVal(raw, "uuid"),
-			SessionID:    strVal(raw, "session_id"),
-			ToolUseID:    strVal(raw, "tool_use_id"),
-			LastToolName: strVal(raw, "last_tool_name"),
+			SystemMessage: SystemMessage{Subtype: "task_progress", Data: raw},
+			TaskID:        strVal(raw, "task_id"),
+			Description:   strVal(raw, "description"),
+			UUID:          strVal(raw, "uuid"),
+			SessionID:     strVal(raw, "session_id"),
+			ToolUseID:     strVal(raw, "tool_use_id"),
+			LastToolName:  strVal(raw, "last_tool_name"),
 		}
 		if u, ok := raw["usage"].(map[string]any); ok {
 			if tokens, ok := u["total_tokens"].(float64); ok {
@@ -42,13 +44,14 @@ func parseMessage(raw map[string]any) (Message, error) {
 		return p, nil
 	case "task_notification":
 		n := &TaskNotificationMessage{
-			TaskID:     strVal(raw, "task_id"),
-			Status:     TaskNotificationStatus(strVal(raw, "status")),
-			OutputFile: strVal(raw, "output_file"),
-			Summary:    strVal(raw, "summary"),
-			UUID:       strVal(raw, "uuid"),
-			SessionID:  strVal(raw, "session_id"),
-			ToolUseID:  strVal(raw, "tool_use_id"),
+			SystemMessage: SystemMessage{Subtype: "task_notification", Data: raw},
+			TaskID:        strVal(raw, "task_id"),
+			Status:        TaskNotificationStatus(strVal(raw, "status")),
+			OutputFile:    strVal(raw, "output_file"),
+			Summary:       strVal(raw, "summary"),
+			UUID:          strVal(raw, "uuid"),
+			SessionID:     strVal(raw, "session_id"),
+			ToolUseID:     strVal(raw, "tool_use_id"),
 		}
 		if u, ok := raw["usage"].(map[string]any); ok {
 			usage := &TaskUsage{}
@@ -70,6 +73,9 @@ func parseMessage(raw map[string]any) (Message, error) {
 		return parseStreamEvent(raw)
 	case "rate_limit_event":
 		return parseRateLimitEvent(raw)
+	case "":
+		// Missing type field — match Python SDK which raises MessageParseError.
+		return nil, &MessageParseError{Message: "message missing 'type' field", Data: raw}
 	default:
 		// Forward-compatible: unknown message types are silently skipped.
 		return nil, nil
@@ -79,6 +85,63 @@ func parseMessage(raw map[string]any) (Message, error) {
 func parseSystemMessage(raw map[string]any) (Message, error) {
 	subtype := strVal(raw, "subtype")
 	switch subtype {
+	case "task_started":
+		return &TaskStartedMessage{
+			SystemMessage: SystemMessage{Subtype: subtype, Data: raw},
+			TaskID:        strVal(raw, "task_id"),
+			Description:   strVal(raw, "description"),
+			UUID:          strVal(raw, "uuid"),
+			SessionID:     strVal(raw, "session_id"),
+			ToolUseID:     strVal(raw, "tool_use_id"),
+			TaskType:      strVal(raw, "task_type"),
+		}, nil
+	case "task_progress":
+		p := &TaskProgressMessage{
+			SystemMessage: SystemMessage{Subtype: subtype, Data: raw},
+			TaskID:        strVal(raw, "task_id"),
+			Description:   strVal(raw, "description"),
+			UUID:          strVal(raw, "uuid"),
+			SessionID:     strVal(raw, "session_id"),
+			ToolUseID:     strVal(raw, "tool_use_id"),
+			LastToolName:  strVal(raw, "last_tool_name"),
+		}
+		if u, ok := raw["usage"].(map[string]any); ok {
+			if tokens, ok := u["total_tokens"].(float64); ok {
+				p.Usage.TotalTokens = int(tokens)
+			}
+			if toolUses, ok := u["tool_uses"].(float64); ok {
+				p.Usage.ToolUses = int(toolUses)
+			}
+			if dur, ok := u["duration_ms"].(float64); ok {
+				p.Usage.DurationMs = int(dur)
+			}
+		}
+		return p, nil
+	case "task_notification":
+		n := &TaskNotificationMessage{
+			SystemMessage: SystemMessage{Subtype: subtype, Data: raw},
+			TaskID:        strVal(raw, "task_id"),
+			Status:        TaskNotificationStatus(strVal(raw, "status")),
+			OutputFile:    strVal(raw, "output_file"),
+			Summary:       strVal(raw, "summary"),
+			UUID:          strVal(raw, "uuid"),
+			SessionID:     strVal(raw, "session_id"),
+			ToolUseID:     strVal(raw, "tool_use_id"),
+		}
+		if u, ok := raw["usage"].(map[string]any); ok {
+			usage := &TaskUsage{}
+			if tokens, ok := u["total_tokens"].(float64); ok {
+				usage.TotalTokens = int(tokens)
+			}
+			if toolUses, ok := u["tool_uses"].(float64); ok {
+				usage.ToolUses = int(toolUses)
+			}
+			if dur, ok := u["duration_ms"].(float64); ok {
+				usage.DurationMs = int(dur)
+			}
+			n.Usage = usage
+		}
+		return n, nil
 	case "mirror_error":
 		msg := &MirrorErrorMessage{
 			SystemMessage: SystemMessage{Subtype: subtype, Data: raw},

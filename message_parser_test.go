@@ -191,6 +191,168 @@ func TestParseTaskNotificationMessage(t *testing.T) {
 	}
 }
 
+func TestParseTaskStartedMessage_EmbeddedSystemMessage(t *testing.T) {
+	raw := map[string]any{
+		"type":        "task_started",
+		"task_id":     "task_001",
+		"description": "Research task",
+		"uuid":        "uuid-xyz",
+		"session_id":  "sess1",
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tm, ok := msg.(*TaskStartedMessage)
+	if !ok {
+		t.Fatalf("expected *TaskStartedMessage, got %T", msg)
+	}
+	// Verify embedded SystemMessage fields are populated (matching Python SDK).
+	if tm.Subtype != "task_started" {
+		t.Errorf("expected Subtype 'task_started', got %q", tm.Subtype)
+	}
+	if tm.Data == nil {
+		t.Fatal("expected Data to be populated, got nil")
+	}
+	if tm.Data["task_id"] != "task_001" {
+		t.Errorf("wrong Data[task_id]: %v", tm.Data["task_id"])
+	}
+}
+
+// TestParseTaskStartedMessage_AsSystemSubtype verifies that the Go parser
+// also handles the CLI's actual wire format: type="system" + subtype="task_started".
+// This matches the Python SDK's parser which dispatches on subtype within system messages.
+func TestParseTaskStartedMessage_AsSystemSubtype(t *testing.T) {
+	raw := map[string]any{
+		"type":        "system",
+		"subtype":     "task_started",
+		"task_id":     "task_001",
+		"description": "Research task",
+		"uuid":        "uuid-xyz",
+		"session_id":  "sess1",
+		"task_type":   "background",
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tm, ok := msg.(*TaskStartedMessage)
+	if !ok {
+		t.Fatalf("expected *TaskStartedMessage, got %T", msg)
+	}
+	if tm.Subtype != "task_started" {
+		t.Errorf("expected Subtype 'task_started', got %q", tm.Subtype)
+	}
+	if tm.TaskID != "task_001" {
+		t.Errorf("expected TaskID 'task_001', got %q", tm.TaskID)
+	}
+	if tm.TaskType != "background" {
+		t.Errorf("expected TaskType 'background', got %q", tm.TaskType)
+	}
+	if tm.Data == nil {
+		t.Fatal("expected Data to be populated, got nil")
+	}
+}
+
+func TestParseTaskNotificationMessage_AsSystemSubtype(t *testing.T) {
+	raw := map[string]any{
+		"type":       "system",
+		"subtype":    "task_notification",
+		"task_id":    "task_001",
+		"status":     "completed",
+		"summary":    "All finished",
+		"uuid":       "uuid-xyz",
+		"session_id": "sess1",
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tn, ok := msg.(*TaskNotificationMessage)
+	if !ok {
+		t.Fatalf("expected *TaskNotificationMessage, got %T", msg)
+	}
+	if tn.Subtype != "task_notification" {
+		t.Errorf("expected Subtype 'task_notification', got %q", tn.Subtype)
+	}
+	if tn.Status != TaskStatusCompleted {
+		t.Errorf("expected completed, got %s", tn.Status)
+	}
+}
+
+func TestParseTaskProgressMessage_EmbeddedSystemMessage(t *testing.T) {
+	raw := map[string]any{
+		"type":        "task_progress",
+		"task_id":     "task_002",
+		"description": "Working...",
+		"uuid":        "uuid-abc",
+		"session_id":  "sess2",
+		"usage": map[string]any{
+			"total_tokens": float64(1000),
+			"tool_uses":    float64(5),
+			"duration_ms":  float64(3000),
+		},
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tp, ok := msg.(*TaskProgressMessage)
+	if !ok {
+		t.Fatalf("expected *TaskProgressMessage, got %T", msg)
+	}
+	if tp.Subtype != "task_progress" {
+		t.Errorf("expected Subtype 'task_progress', got %q", tp.Subtype)
+	}
+	if tp.Data == nil {
+		t.Fatal("expected Data to be populated, got nil")
+	}
+	if tp.Usage.TotalTokens != 1000 {
+		t.Errorf("expected 1000 total tokens, got %d", tp.Usage.TotalTokens)
+	}
+}
+
+func TestParseTaskNotificationMessage_EmbeddedSystemMessage(t *testing.T) {
+	raw := map[string]any{
+		"type":       "task_notification",
+		"task_id":    "task_003",
+		"status":     "completed",
+		"summary":    "Done",
+		"uuid":       "uuid-def",
+		"session_id": "sess3",
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tn, ok := msg.(*TaskNotificationMessage)
+	if !ok {
+		t.Fatalf("expected *TaskNotificationMessage, got %T", msg)
+	}
+	if tn.Subtype != "task_notification" {
+		t.Errorf("expected Subtype 'task_notification', got %q", tn.Subtype)
+	}
+	if tn.Data == nil {
+		t.Fatal("expected Data to be populated, got nil")
+	}
+}
+
+func TestParseMessage_EmptyType_ReturnsError(t *testing.T) {
+	raw := map[string]any{"subtype": "something"}
+	msg, err := parseMessage(raw)
+	if err == nil {
+		t.Fatal("expected error for missing type field")
+	}
+	if msg != nil {
+		t.Errorf("expected nil message, got %v", msg)
+	}
+	var parseErr *MessageParseError
+	if _, ok := err.(*MessageParseError); !ok {
+		t.Errorf("expected *MessageParseError, got %T", err)
+	}
+	_ = parseErr
+}
+
 func TestParseUnknownType(t *testing.T) {
 	raw := map[string]any{"type": "unknown_xyz"}
 	msg, err := parseMessage(raw)
