@@ -693,6 +693,12 @@ type SessionSummaryEntry struct {
 	Data      map[string]any `json:"data"`
 }
 
+// SessionListSubkeysKey is the key argument to SessionStore.ListSubkeys.
+type SessionListSubkeysKey struct {
+	ProjectKey string `json:"project_key"`
+	SessionID  string `json:"session_id"`
+}
+
 // SessionStore is an adapter for mirroring session transcripts to external storage.
 type SessionStore interface {
 	// Append mirrors a batch of transcript entries.

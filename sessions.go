@@ -507,6 +507,164 @@ func GetSessionMessagesFromStore(store SessionStore, key SessionKey, limit, offs
 	return msgs, nil
 }
 
+// GetSessionInfoFromStore loads session info from a SessionStore.
+func GetSessionInfoFromStore(store SessionStore, key SessionKey) (*SDKSessionInfo, error) {
+	entries, err := store.Load(key)
+	if err != nil || len(entries) == 0 {
+		return nil, nil
+	}
+	info := extractSessionInfoFromStoreEntries(key.SessionID, entries, 0)
+	return info, nil
+}
+
+// ListSubagentsFromStore lists subagent transcripts from a SessionStore.
+func ListSubagentsFromStore(store SessionStore, projectKey, sessionID string) ([]SubagentInfo, error) {
+	subkeys, err := store.ListSubkeys(projectKey, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	var result []SubagentInfo
+	for _, sub := range subkeys {
+		// subkeys are like "subagents/agent-{id}"
+		parts := strings.SplitN(sub, "/", 2)
+		agentID := sub
+		if len(parts) == 2 {
+			agentID = parts[1]
+		}
+		agentID = strings.TrimPrefix(agentID, "agent-")
+		result = append(result, SubagentInfo{AgentID: agentID})
+	}
+	return result, nil
+}
+
+// GetSubagentMessagesFromStore loads subagent messages from a SessionStore.
+func GetSubagentMessagesFromStore(store SessionStore, key SessionKey, limit, offset int) ([]SessionMessage, error) {
+	entries, err := store.Load(key)
+	if err != nil || len(entries) == 0 {
+		return nil, nil
+	}
+	var transcript []map[string]any
+	for _, e := range entries {
+		m := map[string]any{"type": e.Type, "uuid": e.UUID}
+		for k, v := range e.Extra {
+			m[k] = v
+		}
+		transcript = append(transcript, m)
+	}
+	chain := buildSubagentChain(transcript)
+	var msgs []SessionMessage
+	for _, e := range chain {
+		t := strVal(e, "type")
+		if t != "user" && t != "assistant" {
+			continue
+		}
+		msgs = append(msgs, transcriptEntryToSessionMessage(e))
+	}
+	if offset > 0 && offset < len(msgs) {
+		msgs = msgs[offset:]
+	}
+	if limit > 0 && len(msgs) > limit {
+		msgs = msgs[:limit]
+	}
+	return msgs, nil
+}
+
+// FoldSessionSummary incrementally derives session metadata from entries.
+// Stores can call this inside Append() to maintain a SessionSummaryEntry sidecar.
+// The prev parameter is the previous summary (nil for first call).
+// Returns the updated summary.
+func FoldSessionSummary(prev *SessionSummaryEntry, key SessionKey, entries []SessionStoreEntry, mtime int64) *SessionSummaryEntry {
+	if len(entries) == 0 {
+		return prev
+	}
+	var s *SessionSummaryEntry
+	if prev != nil {
+		// Copy to avoid mutating the caller's value.
+		cp := *prev
+		cp.Data = make(map[string]any, len(prev.Data))
+		for k, v := range prev.Data {
+			cp.Data[k] = v
+		}
+		s = &cp
+	} else {
+		s = &SessionSummaryEntry{
+			SessionID: key.SessionID,
+			Data:      make(map[string]any),
+		}
+	}
+	if mtime > 0 {
+		s.Mtime = mtime
+	}
+	for _, e := range entries {
+		if e.Extra == nil {
+			continue
+		}
+		// Last-wins string fields.
+		for _, field := range []string{"customTitle", "aiTitle", "summary", "lastPrompt", "gitBranch", "cwd"} {
+			if v, ok := e.Extra[field].(string); ok && v != "" {
+				s.Data[field] = v
+			}
+		}
+		// First-prompt (set-once).
+		if _, has := s.Data["firstPrompt"]; !has {
+			if msg, ok := e.Extra["message"].(map[string]any); ok {
+				if content, ok := msg["content"].(string); ok && content != "" {
+					s.Data["firstPrompt"] = content
+				}
+			}
+		}
+		// Tag (last-wins, empty means cleared).
+		if e.Type == "tag" {
+			if tag, ok := e.Extra["tag"].(string); ok {
+				s.Data["tag"] = tag
+			}
+		}
+	}
+	return s
+}
+
+// ImportSessionToStore replays a local session transcript into a SessionStore.
+func ImportSessionToStore(store SessionStore, sessionID, directory string) error {
+	if !validateUUID(sessionID) {
+		return fmt.Errorf("invalid session_id: %s", sessionID)
+	}
+	content, err := readSessionFileContent(sessionID, directory)
+	if err != nil || content == "" {
+		return fmt.Errorf("session %s not found", sessionID)
+	}
+	projectKey := ""
+	if directory != "" {
+		canonDir, err := filepath.EvalSymlinks(directory)
+		if err != nil {
+			canonDir = directory
+		}
+		projectKey = sanitizePath(normalizeUnicode(canonDir))
+	}
+	key := SessionKey{ProjectKey: projectKey, SessionID: sessionID}
+	var entries []SessionStoreEntry
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var raw map[string]any
+		if json.Unmarshal([]byte(line), &raw) != nil {
+			continue
+		}
+		entry := SessionStoreEntry{
+			Type: strVal(raw, "type"),
+			UUID: strVal(raw, "uuid"),
+		}
+		entry.Timestamp = strVal(raw, "timestamp")
+		entry.Extra = raw
+		entries = append(entries, entry)
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+	return store.Append(key, entries)
+}
+
 // readSessionFileContent finds and reads the raw JSONL content for a session.
 // When directory is "", searches all project directories.
 // When directory is set, tries that directory then falls back to its git worktrees.
