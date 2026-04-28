@@ -1394,3 +1394,57 @@ func (s *contentTypeMCPServer) ListTools(ctx context.Context) ([]MCPTool, error)
 func (s *contentTypeMCPServer) CallTool(ctx context.Context, name string, arguments map[string]any) (ToolResult, error) {
 	return ToolResult{Content: s.content}, nil
 }
+
+// TestMcpToolAnnotations_WireFormat verifies that McpToolAnnotations
+// correctly deserializes from CLI status response format (no "Hint" suffix).
+func TestMcpToolAnnotations_WireFormat(t *testing.T) {
+	// Simulate CLI wire format for status response tool annotations.
+	readOnly := true
+	annotations := McpToolAnnotations{
+		ReadOnly: &readOnly,
+	}
+	b, err := json.Marshal(annotations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	_ = json.Unmarshal(b, &m)
+	if m["readOnly"] != true {
+		t.Errorf("expected readOnly=true in JSON, got %v", m)
+	}
+	if _, hasHint := m["readOnlyHint"]; hasHint {
+		t.Error("readOnlyHint should NOT appear in McpToolAnnotations JSON")
+	}
+}
+
+// TestMcpServerInfo_Type verifies McpServerInfo struct.
+func TestMcpServerInfo_Type(t *testing.T) {
+	info := McpServerInfo{Name: "test-server", Version: "1.0.0"}
+	b, _ := json.Marshal(info)
+	var m map[string]any
+	_ = json.Unmarshal(b, &m)
+	if m["name"] != "test-server" {
+		t.Errorf("wrong name: %v", m["name"])
+	}
+}
+
+// TestMcpServerStatus_Typed verifies McpServerStatus uses typed fields.
+func TestMcpServerStatus_Typed(t *testing.T) {
+	status := McpServerStatus{
+		Name:       "calc",
+		Status:     McpStatusConnected,
+		ServerInfo: &McpServerInfo{Name: "calc", Version: "1.0.0"},
+		Tools: []McpToolInfo{
+			{Name: "add", Annotations: &McpToolAnnotations{ReadOnly: boolPtr(true)}},
+		},
+	}
+	if status.Status != McpStatusConnected {
+		t.Errorf("wrong status: %v", status.Status)
+	}
+	if status.ServerInfo == nil || status.ServerInfo.Name != "calc" {
+		t.Error("wrong server info")
+	}
+	if len(status.Tools) != 1 || status.Tools[0].Annotations == nil {
+		t.Error("wrong tools/annotations")
+	}
+}

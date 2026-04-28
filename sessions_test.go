@@ -682,3 +682,125 @@ func TestSanitizeUnicode_Clean(t *testing.T) {
 		t.Errorf("expected %q, got %q", input, got)
 	}
 }
+
+func TestProjectKeyForDirectory(t *testing.T) {
+	key := ProjectKeyForDirectory("/tmp/test/project")
+	if key == "" {
+		t.Error("expected non-empty key")
+	}
+	// Same input should produce same key.
+	key2 := ProjectKeyForDirectory("/tmp/test/project")
+	if key != key2 {
+		t.Errorf("same input should produce same key: %q vs %q", key, key2)
+	}
+}
+
+func TestListSubagents_Empty(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", tmpDir)
+	os.MkdirAll(filepath.Join(tmpDir, "projects"), 0755)
+
+	subs, err := ListSubagents("00000000-0000-0000-0000-000000000001", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(subs) != 0 {
+		t.Errorf("expected 0 subagents, got %d", len(subs))
+	}
+}
+
+func TestGetSubagentMessages_Empty(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", tmpDir)
+	os.MkdirAll(filepath.Join(tmpDir, "projects"), 0755)
+
+	msgs, err := GetSubagentMessages("00000000-0000-0000-0000-000000000001", "agent-1", "", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 0 {
+		t.Errorf("expected 0 messages, got %d", len(msgs))
+	}
+}
+
+// TestStoreBackedSession verifies store-backed session operations.
+func TestStoreBackedSession(t *testing.T) {
+	store := &testMemoryStore{
+		data: make(map[string][]SessionStoreEntry),
+	}
+	key := SessionKey{ProjectKey: "test-project", SessionID: "sess-1"}
+
+	// Append entries.
+	err := store.Append(key, []SessionStoreEntry{
+		{Type: "user", UUID: "u1", Extra: map[string]any{"message": map[string]any{"content": "hello"}}},
+		{Type: "assistant", UUID: "a1", Extra: map[string]any{"parentUuid": "u1", "message": map[string]any{"content": []any{map[string]any{"type": "text", "text": "hi"}}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Load entries.
+	entries, err := store.Load(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(entries))
+	}
+
+	// List sessions.
+	list, err := store.ListSessions("test-project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(list))
+	}
+}
+
+// testMemoryStore is a simple in-memory SessionStore for testing.
+type testMemoryStore struct {
+	data      map[string][]SessionStoreEntry
+	summaries map[string]SessionSummaryEntry
+}
+
+func (s *testMemoryStore) Append(key SessionKey, entries []SessionStoreEntry) error {
+	k := key.ProjectKey + "/" + key.SessionID
+	s.data[k] = append(s.data[k], entries...)
+	return nil
+}
+
+func (s *testMemoryStore) Load(key SessionKey) ([]SessionStoreEntry, error) {
+	k := key.ProjectKey + "/" + key.SessionID
+	return s.data[k], nil
+}
+
+func (s *testMemoryStore) ListSessions(projectKey string) ([]SessionStoreListEntry, error) {
+	var result []SessionStoreListEntry
+	for k, entries := range s.data {
+		prefix := projectKey + "/"
+		if strings.HasPrefix(k, prefix) {
+			sid := strings.TrimPrefix(k, prefix)
+			mtime := int64(0)
+			if len(entries) > 0 {
+				mtime = 1000
+			}
+			result = append(result, SessionStoreListEntry{SessionID: sid, Mtime: mtime})
+		}
+	}
+	return result, nil
+}
+
+func (s *testMemoryStore) ListSessionSummaries(projectKey string) ([]SessionSummaryEntry, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (s *testMemoryStore) Delete(key SessionKey) error {
+	k := key.ProjectKey + "/" + key.SessionID
+	delete(s.data, k)
+	return nil
+}
+
+func (s *testMemoryStore) ListSubkeys(projectKey, sessionID string) ([]string, error) {
+	return nil, nil
+}

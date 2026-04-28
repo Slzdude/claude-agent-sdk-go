@@ -188,6 +188,325 @@ func GetSessionMessages(sessionID string, directory string, limit int, offset in
 	return msgs, nil
 }
 
+// ProjectKeyForDirectory derives the SessionStore project key from a directory path.
+// This is the bridge between filesystem paths and SessionStore keys.
+func ProjectKeyForDirectory(directory string) string {
+	if directory == "" {
+		directory = "."
+	}
+	canonDir, err := filepath.EvalSymlinks(directory)
+	if err != nil {
+		canonDir = directory
+	}
+	return sanitizePath(normalizeUnicode(canonDir))
+}
+
+// SubagentInfo describes a subagent transcript.
+type SubagentInfo struct {
+	AgentID   string `json:"agent_id"`
+	AgentType string `json:"agent_type,omitempty"`
+	FilePath  string `json:"-"`
+}
+
+// ListSubagents returns the subagent IDs for a session.
+// Scans <sessionId>/subagents/agent-*.jsonl files.
+func ListSubagents(sessionID, directory string) ([]SubagentInfo, error) {
+	if !validateUUID(sessionID) {
+		return nil, nil
+	}
+	dir := resolveSubagentsDir(sessionID, directory)
+	if dir == "" {
+		return nil, nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, nil
+	}
+	var result []SubagentInfo
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".jsonl") {
+			continue
+		}
+		agentID := strings.TrimSuffix(name, ".jsonl")
+		// Extract agent type from first line if available.
+		agentType := ""
+		fp := filepath.Join(dir, name)
+		if data, err := os.ReadFile(fp); err == nil {
+			lines := strings.SplitN(string(data), "\n", 2)
+			if len(lines) > 0 {
+				var entry map[string]any
+				if json.Unmarshal([]byte(lines[0]), &entry) == nil {
+					agentType = strVal(entry, "agentType")
+				}
+			}
+		}
+		result = append(result, SubagentInfo{
+			AgentID:   agentID,
+			AgentType: agentType,
+			FilePath:  fp,
+		})
+	}
+	return result, nil
+}
+
+// GetSubagentMessages returns messages from a subagent's transcript.
+func GetSubagentMessages(sessionID, agentID, directory string, limit, offset int) ([]SessionMessage, error) {
+	if !validateUUID(sessionID) {
+		return nil, nil
+	}
+	dir := resolveSubagentsDir(sessionID, directory)
+	if dir == "" {
+		return nil, nil
+	}
+	fp := filepath.Join(dir, agentID+".jsonl")
+	data, err := os.ReadFile(fp)
+	if err != nil {
+		return nil, nil
+	}
+	entries := parseTranscriptEntries(string(data))
+	chain := buildSubagentChain(entries)
+	var msgs []SessionMessage
+	for _, e := range chain {
+		t := strVal(e, "type")
+		if t != "user" && t != "assistant" {
+			continue
+		}
+		msgs = append(msgs, transcriptEntryToSessionMessage(e))
+	}
+	if offset > 0 && offset < len(msgs) {
+		msgs = msgs[offset:]
+	}
+	if limit > 0 && len(msgs) > limit {
+		msgs = msgs[:limit]
+	}
+	return msgs, nil
+}
+
+func resolveSubagentsDir(sessionID, directory string) string {
+	fileName := sessionID + ".jsonl"
+	tryDir := func(projectDir string) string {
+		subDir := filepath.Join(projectDir, sessionID, "subagents")
+		if fi, err := os.Stat(subDir); err == nil && fi.IsDir() {
+			return subDir
+		}
+		return ""
+	}
+	if directory != "" {
+		canonDir, err := filepath.EvalSymlinks(directory)
+		if err != nil {
+			canonDir = directory
+		}
+		canonDir = normalizeUnicode(canonDir)
+		if projectDir := findProjectDir(canonDir); projectDir != "" {
+			if d := tryDir(projectDir); d != "" {
+				return d
+			}
+		}
+		for _, wt := range getWorktreePaths(canonDir) {
+			if wt == canonDir {
+				continue
+			}
+			if projectDir := findProjectDir(wt); projectDir != "" {
+				if d := tryDir(projectDir); d != "" {
+					return d
+				}
+			}
+		}
+		return ""
+	}
+	// Check if session file exists in any project dir, then look for subagents.
+	projectsDir := getProjectsDir()
+	ents, err := os.ReadDir(projectsDir)
+	if err != nil {
+		return ""
+	}
+	for _, e := range ents {
+		if !e.IsDir() {
+			continue
+		}
+		projectDir := filepath.Join(projectsDir, e.Name())
+		fp := filepath.Join(projectDir, fileName)
+		if _, err := os.Stat(fp); err == nil {
+			if d := tryDir(projectDir); d != "" {
+				return d
+			}
+		}
+	}
+	return ""
+}
+
+func buildSubagentChain(entries []map[string]any) []map[string]any {
+	if len(entries) == 0 {
+		return nil
+	}
+	byUUID := make(map[string]map[string]any, len(entries))
+	entryPos := make(map[string]int, len(entries))
+	for i, e := range entries {
+		uid := strVal(e, "uuid")
+		byUUID[uid] = e
+		entryPos[uid] = i
+	}
+	// Find leaf: last entry that is user or assistant.
+	var best map[string]any
+	bestPos := -1
+	for i := len(entries) - 1; i >= 0; i-- {
+		t := strVal(entries[i], "type")
+		if t == "user" || t == "assistant" {
+			best = entries[i]
+			bestPos = i
+			break
+		}
+	}
+	if best == nil {
+		return nil
+	}
+	_ = bestPos
+	// Walk from best leaf to root.
+	chain := make([]map[string]any, 0, 64)
+	seen := make(map[string]bool)
+	cur := best
+	for cur != nil {
+		uid := strVal(cur, "uuid")
+		if seen[uid] {
+			break
+		}
+		seen[uid] = true
+		chain = append(chain, cur)
+		parent := strVal(cur, "parentUuid")
+		if parent == "" {
+			break
+		}
+		cur = byUUID[parent]
+	}
+	for i, j := 0, len(chain)-1; i < j; i, j = i+1, j-1 {
+		chain[i], chain[j] = chain[j], chain[i]
+	}
+	return chain
+}
+
+// Store-backed session operations ----------------------------------------------------------------
+
+// ListSessionsFromStore lists sessions from a SessionStore.
+// If the store implements ListSessionSummaries, uses the summary-backed fast path.
+func ListSessionsFromStore(store SessionStore, projectKey string, limit int) ([]SDKSessionInfo, error) {
+	// Try summary-backed fast path first.
+	if summaries, err := store.ListSessionSummaries(projectKey); err == nil && len(summaries) > 0 {
+		var results []SDKSessionInfo
+		for _, s := range summaries {
+			results = append(results, SDKSessionInfo{
+				SessionID:    s.SessionID,
+				Summary:      strVal(s.Data, "summary"),
+				LastModified: s.Mtime,
+				CustomTitle:  strVal(s.Data, "customTitle"),
+				FirstPrompt:  strVal(s.Data, "firstPrompt"),
+			})
+		}
+		sortSessionsByMtime(results)
+		if limit > 0 && len(results) > limit {
+			results = results[:limit]
+		}
+		return results, nil
+	}
+	// Fallback to list_sessions + per-session load.
+	entries, err := store.ListSessions(projectKey)
+	if err != nil {
+		return nil, err
+	}
+	var results []SDKSessionInfo
+	for _, e := range entries {
+		storeEntries, err := store.Load(SessionKey{ProjectKey: projectKey, SessionID: e.SessionID})
+		if err != nil || len(storeEntries) == 0 {
+			continue
+		}
+		// Extract metadata from entries.
+		info := extractSessionInfoFromStoreEntries(e.SessionID, storeEntries, e.Mtime)
+		if info != nil {
+			results = append(results, *info)
+		}
+	}
+	sortSessionsByMtime(results)
+	if limit > 0 && len(results) > limit {
+		results = results[:limit]
+	}
+	return results, nil
+}
+
+func extractSessionInfoFromStoreEntries(sessionID string, entries []SessionStoreEntry, mtime int64) *SDKSessionInfo {
+	if len(entries) == 0 {
+		return nil
+	}
+	var summary, customTitle, firstPrompt string
+	for _, e := range entries {
+		if e.Extra != nil {
+			if ct, ok := e.Extra["customTitle"].(string); ok && ct != "" {
+				customTitle = ct
+			}
+			if s, ok := e.Extra["summary"].(string); ok && s != "" {
+				summary = s
+			}
+		}
+		if firstPrompt == "" && e.Extra != nil {
+			if msg, ok := e.Extra["message"].(map[string]any); ok {
+				if content, ok := msg["content"].(string); ok && content != "" {
+					firstPrompt = content
+				}
+			}
+		}
+	}
+	if customTitle != "" {
+		summary = customTitle
+	}
+	if summary == "" {
+		summary = firstPrompt
+	}
+	if summary == "" {
+		return nil
+	}
+	return &SDKSessionInfo{
+		SessionID:    sessionID,
+		Summary:      summary,
+		LastModified: mtime,
+		CustomTitle:  customTitle,
+		FirstPrompt:  firstPrompt,
+	}
+}
+
+// GetSessionMessagesFromStore loads session messages from a SessionStore.
+func GetSessionMessagesFromStore(store SessionStore, key SessionKey, limit, offset int) ([]SessionMessage, error) {
+	entries, err := store.Load(key)
+	if err != nil || len(entries) == 0 {
+		return nil, nil
+	}
+	// Convert store entries to transcript format for chain building.
+	var transcript []map[string]any
+	for _, e := range entries {
+		m := map[string]any{
+			"type": e.Type,
+			"uuid": e.UUID,
+		}
+		for k, v := range e.Extra {
+			m[k] = v
+		}
+		transcript = append(transcript, m)
+	}
+	chain := buildConversationChain(transcript)
+	var msgs []SessionMessage
+	for _, e := range chain {
+		if !isVisibleMessage(e) {
+			continue
+		}
+		msgs = append(msgs, transcriptEntryToSessionMessage(e))
+	}
+	if offset > 0 && offset < len(msgs) {
+		msgs = msgs[offset:]
+	}
+	if limit > 0 && len(msgs) > limit {
+		msgs = msgs[:limit]
+	}
+	return msgs, nil
+}
+
 // readSessionFileContent finds and reads the raw JSONL content for a session.
 // When directory is "", searches all project directories.
 // When directory is set, tries that directory then falls back to its git worktrees.

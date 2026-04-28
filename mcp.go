@@ -68,30 +68,69 @@ type MCPTool struct {
 }
 
 // ToolAnnotations provides optional hints about a tool's behaviour.
+// Used for SDK MCP server tool definitions (wire format: readOnlyHint, etc.)
 type ToolAnnotations struct {
-	ReadOnlyHint        *bool `json:"readOnlyHint,omitempty"`
-	DestructiveHint     *bool `json:"destructiveHint,omitempty"`
-	IdempotentHint      *bool `json:"idempotentHint,omitempty"`
-	OpenWorldHint       *bool `json:"openWorldHint,omitempty"`
-	MaxResultSizeChars  *int  `json:"maxResultSizeChars,omitempty"`
+	ReadOnlyHint       *bool `json:"readOnlyHint,omitempty"`
+	DestructiveHint    *bool `json:"destructiveHint,omitempty"`
+	IdempotentHint     *bool `json:"idempotentHint,omitempty"`
+	OpenWorldHint      *bool `json:"openWorldHint,omitempty"`
+	MaxResultSizeChars *int  `json:"maxResultSizeChars,omitempty"`
 }
 
-// McpToolInfo describes a single tool exposed by an MCP server.
+// McpServerConnectionStatus enumerates MCP server connection states.
+type McpServerConnectionStatus string
+
+const (
+	McpStatusConnected McpServerConnectionStatus = "connected"
+	McpStatusPending   McpServerConnectionStatus = "pending"
+	McpStatusFailed    McpServerConnectionStatus = "failed"
+	McpStatusNeedsAuth McpServerConnectionStatus = "needs-auth"
+	McpStatusDisabled  McpServerConnectionStatus = "disabled"
+)
+
+// McpServerInfo describes an MCP server's identity.
+type McpServerInfo struct {
+	Name    string `json:"name"`
+	Version string `json:"version,omitempty"`
+}
+
+// McpToolAnnotations is the wire format for tool annotations in MCP status responses.
+// Note: field names differ from ToolAnnotations (no "Hint" suffix).
+type McpToolAnnotations struct {
+	ReadOnly    *bool `json:"readOnly,omitempty"`
+	Destructive *bool `json:"destructive,omitempty"`
+	OpenWorld   *bool `json:"openWorld,omitempty"`
+}
+
+// McpToolInfo describes a single tool in an MCP server status response.
 type McpToolInfo struct {
-	Name        string           `json:"name"`
-	Description string           `json:"description,omitempty"`
-	Annotations *ToolAnnotations `json:"annotations,omitempty"`
+	Name        string              `json:"name"`
+	Description string              `json:"description,omitempty"`
+	Annotations *McpToolAnnotations `json:"annotations,omitempty"`
+}
+
+// McpSdkServerConfigStatus describes an SDK MCP server in status responses.
+type McpSdkServerConfigStatus struct {
+	Type string `json:"type"` // "sdk"
+	Name string `json:"name"`
+}
+
+// McpClaudeAIProxyServerConfig describes a Claude AI proxy server in status responses.
+type McpClaudeAIProxyServerConfig struct {
+	Type string `json:"type"` // "claude_ai_proxy"
+	URL  string `json:"url,omitempty"`
+	ID   string `json:"id,omitempty"`
 }
 
 // McpServerStatus represents the connection status of an MCP server.
 type McpServerStatus struct {
-	Name       string         `json:"name"`
-	Status     string         `json:"status"` // connected | pending | failed | needs-auth | disabled
-	ServerInfo map[string]any `json:"serverInfo,omitempty"`
-	Config     map[string]any `json:"config,omitempty"`
-	Error      string         `json:"error,omitempty"`
-	Scope      string         `json:"scope,omitempty"`
-	Tools      []McpToolInfo  `json:"tools,omitempty"`
+	Name       string                   `json:"name"`
+	Status     McpServerConnectionStatus `json:"status"`
+	ServerInfo *McpServerInfo           `json:"serverInfo,omitempty"`
+	Config     map[string]any           `json:"config,omitempty"`
+	Error      string                   `json:"error,omitempty"`
+	Scope      string                   `json:"scope,omitempty"`
+	Tools      []McpToolInfo            `json:"tools,omitempty"`
 }
 
 // McpStatusResponse is returned by ClaudeSDKClient.GetMcpStatus.

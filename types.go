@@ -42,19 +42,19 @@ const (
 
 // AgentDefinition describes a custom sub-agent.
 type AgentDefinition struct {
-	Description     string                  `json:"description"`
-	Prompt          string                  `json:"prompt"`
-	Tools           []string                `json:"tools,omitempty"`
-	DisallowedTools []string                `json:"disallowedTools,omitempty"`
-	Model           string                  `json:"model,omitempty"` // "sonnet", "opus", "haiku", "inherit", or full model ID
-	Skills          []string                `json:"skills,omitempty"`
-	Memory          string                  `json:"memory,omitempty"` // "user", "project", "local"
-	MCPServers      []map[string]any        `json:"mcpServers,omitempty"`
-	InitialPrompt   string                  `json:"initialPrompt,omitempty"`
-	MaxTurns        *int                    `json:"maxTurns,omitempty"`
-	Background      *bool                   `json:"background,omitempty"`
-	Effort          any                     `json:"effort,omitempty"` // string or int
-	PermissionMode  *PermissionMode         `json:"permissionMode,omitempty"`
+	Description     string          `json:"description"`
+	Prompt          string          `json:"prompt"`
+	Tools           []string        `json:"tools,omitempty"`
+	DisallowedTools []string        `json:"disallowedTools,omitempty"`
+	Model           string          `json:"model,omitempty"` // "sonnet", "opus", "haiku", "inherit", or full model ID
+	Skills          []string        `json:"skills,omitempty"`
+	Memory          string          `json:"memory,omitempty"` // "user", "project", "local"
+	MCPServers      []map[string]any `json:"mcpServers,omitempty"`
+	InitialPrompt   string          `json:"initialPrompt,omitempty"`
+	MaxTurns        *int            `json:"maxTurns,omitempty"`
+	Background      *bool           `json:"background,omitempty"`
+	Effort          EffortLevel     `json:"effort,omitempty"`
+	PermissionMode  *PermissionMode `json:"permissionMode,omitempty"`
 }
 
 // -----------------------------------------------------------------------

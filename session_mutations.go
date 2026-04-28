@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"golang.org/x/text/unicode/norm"
 )
@@ -54,7 +55,7 @@ func TagSession(sessionID, tag, directory string) error {
 	return appendToSession(sessionID, data, directory)
 }
 
-// DeleteSession permanently removes a session's JSONL file.
+// DeleteSession permanently removes a session's JSONL file and subagent transcripts.
 func DeleteSession(sessionID, directory string) error {
 	if !validateUUID(sessionID) {
 		return fmt.Errorf("invalid session_id: %s", sessionID)
@@ -63,7 +64,13 @@ func DeleteSession(sessionID, directory string) error {
 	if path == "" {
 		return fmt.Errorf("session %s not found", sessionID)
 	}
-	return os.Remove(path)
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	// Cascade: remove subagent transcript directory if it exists.
+	subagentDir := filepath.Join(filepath.Dir(path), sessionID)
+	os.RemoveAll(subagentDir) // ignore errors — directory may not exist
+	return nil
 }
 
 // ForkSessionResult holds the new session ID after forking.
@@ -483,4 +490,117 @@ func parseForkTranscript(content, sessionID string) ([]map[string]any, []any) {
 		}
 	}
 	return transcript, contentReplacements
+}
+
+// -----------------------------------------------------------------------
+// Store-backed session mutations
+// -----------------------------------------------------------------------
+
+// RenameSessionViaStore renames a session via a SessionStore.
+func RenameSessionViaStore(store SessionStore, key SessionKey, title string) error {
+	stripped := strings.TrimSpace(title)
+	if stripped == "" {
+		return errors.New("title must be non-empty")
+	}
+	entry := SessionStoreEntry{
+		Type:      "custom-title",
+		UUID:      newUUID(),
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Extra:     map[string]any{"customTitle": stripped, "sessionId": key.SessionID},
+	}
+	return store.Append(key, []SessionStoreEntry{entry})
+}
+
+// TagSessionViaStore tags a session via a SessionStore.
+func TagSessionViaStore(store SessionStore, key SessionKey, tag string) error {
+	if tag != "" {
+		tag = sanitizeUnicode(strings.TrimSpace(tag))
+		if tag == "" {
+			return errors.New("tag must be non-empty after sanitization")
+		}
+	}
+	entry := SessionStoreEntry{
+		Type:      "tag",
+		UUID:      newUUID(),
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Extra:     map[string]any{"tag": tag, "sessionId": key.SessionID},
+	}
+	return store.Append(key, []SessionStoreEntry{entry})
+}
+
+// DeleteSessionViaStore deletes a session from a SessionStore.
+func DeleteSessionViaStore(store SessionStore, key SessionKey) error {
+	return store.Delete(key)
+}
+
+// ForkSessionViaStore forks a session via a SessionStore.
+func ForkSessionViaStore(store SessionStore, sourceKey SessionKey, title string) (*ForkSessionResult, error) {
+	entries, err := store.Load(sourceKey)
+	if err != nil || len(entries) == 0 {
+		return nil, fmt.Errorf("session %s not found in store", sourceKey.SessionID)
+	}
+
+	forkedSessionID := newUUID()
+	forkKey := SessionKey{
+		ProjectKey: sourceKey.ProjectKey,
+		SessionID:  forkedSessionID,
+	}
+
+	// Remap UUIDs.
+	uuidMapping := make(map[string]string, len(entries))
+	for _, e := range entries {
+		if e.UUID != "" {
+			uuidMapping[e.UUID] = newUUID()
+		}
+	}
+
+	var forked []SessionStoreEntry
+	for i, e := range entries {
+		newEntry := SessionStoreEntry{
+			Type:      e.Type,
+			Timestamp: e.Timestamp,
+		}
+		if e.UUID != "" {
+			newEntry.UUID = uuidMapping[e.UUID]
+		}
+		// Copy extra fields and remap parentUuid.
+		if e.Extra != nil {
+			extra := make(map[string]any, len(e.Extra)+2)
+			for k, v := range e.Extra {
+				extra[k] = v
+			}
+			if parentUUID, ok := extra["parentUuid"].(string); ok && parentUUID != "" {
+				if mapped, ok := uuidMapping[parentUUID]; ok {
+					extra["parentUuid"] = mapped
+				}
+			}
+			extra["sessionId"] = forkedSessionID
+			extra["isSidechain"] = false
+			extra["forkedFrom"] = map[string]any{
+				"sessionId":   sourceKey.SessionID,
+				"messageUuid": e.UUID,
+			}
+			newEntry.Extra = extra
+		}
+		_ = i
+		forked = append(forked, newEntry)
+	}
+
+	// Add custom title.
+	forkTitle := strings.TrimSpace(title)
+	if forkTitle == "" {
+		forkTitle = "Forked session"
+	}
+	forkTitle += " (fork)"
+	forked = append(forked, SessionStoreEntry{
+		Type:      "custom-title",
+		UUID:      newUUID(),
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Extra:     map[string]any{"customTitle": forkTitle, "sessionId": forkedSessionID},
+	})
+
+	if err := store.Append(forkKey, forked); err != nil {
+		return nil, err
+	}
+	return &ForkSessionResult{SessionID: forkedSessionID}, nil
 }
