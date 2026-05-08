@@ -37,6 +37,7 @@ const (
 	EffortLow    EffortLevel = "low"
 	EffortMedium EffortLevel = "medium"
 	EffortHigh   EffortLevel = "high"
+	EffortXHigh  EffortLevel = "xhigh" // Opus 4.7 only; falls back to "high" on other models
 	EffortMax    EffortLevel = "max"
 )
 
@@ -116,6 +117,16 @@ type ToolPermissionContext struct {
 	Suggestions []PermissionUpdate
 	ToolUseID   string // Unique identifier for this specific tool call
 	AgentID     string // Sub-agent ID if running within a sub-agent context
+	// BlockedPath is the file path that triggered the permission request.
+	BlockedPath string `json:"blocked_path,omitempty"`
+	// DecisionReason explains why this permission request was triggered.
+	DecisionReason string `json:"decision_reason,omitempty"`
+	// Title is the full permission prompt sentence (e.g. "Claude wants to read foo.txt").
+	Title string `json:"title,omitempty"`
+	// DisplayName is a short noun phrase for the tool action (e.g. "Read file").
+	DisplayName string `json:"display_name,omitempty"`
+	// Description is a human-readable subtitle for the permission UI.
+	Description string `json:"description,omitempty"`
 }
 
 // PermissionResult is implemented by PermissionResultAllow and PermissionResultDeny.
@@ -332,6 +343,35 @@ type MirrorErrorMessage struct {
 
 func (m *MirrorErrorMessage) messageType() string { return "mirror_error" }
 
+// DeferredToolUse represents a tool use that was deferred by a PreToolUse hook
+// returning permissionDecision "defer". The run stops and the result message
+// carries the deferred tool call so the caller can inspect it.
+type DeferredToolUse struct {
+	ID    string         `json:"id"`
+	Name  string         `json:"name"`
+	Input map[string]any `json:"input"`
+}
+
+// HookEventMessage is emitted by the CLI when include_hook_events is enabled.
+// It carries hook lifecycle events (PreToolUse, PostToolUse, Stop, etc.)
+// as system messages with subtype "hook_started" or "hook_response".
+type HookEventMessage struct {
+	SystemMessage
+	HookEventName string `json:"hook_event_name"`
+	SessionID     string `json:"session_id,omitempty"`
+	UUID          string `json:"uuid,omitempty"`
+}
+
+func (m *HookEventMessage) messageType() string { return "hook_event" }
+
+// SessionStoreFlushMode controls when transcript mirror entries are flushed.
+type SessionStoreFlushMode string
+
+const (
+	FlushModeBatched SessionStoreFlushMode = "batched" // Coalesce and flush per turn or threshold
+	FlushModeEager   SessionStoreFlushMode = "eager"   // Flush after every frame
+)
+
 // ResultMessage is the final message from a query.
 type ResultMessage struct {
 	Subtype           string         `json:"subtype"`
@@ -347,7 +387,11 @@ type ResultMessage struct {
 	StructuredOutput  any            `json:"structured_output,omitempty"`
 	ModelUsage        map[string]any `json:"model_usage,omitempty"`
 	PermissionDenials []any          `json:"permission_denials,omitempty"`
+	DeferredToolUse   *DeferredToolUse `json:"deferred_tool_use,omitempty"`
 	Errors            []string       `json:"errors,omitempty"`
+	// APIErrorStatus is the HTTP status code (e.g. 429, 500, 529) of the
+	// failing API call when IsError is true and Subtype is "success".
+	APIErrorStatus    *int           `json:"api_error_status,omitempty"`
 	UUID              string         `json:"uuid,omitempty"`
 }
 
@@ -482,12 +526,20 @@ func (t *ThinkingDisabled) thinkingType() string { return "disabled" }
 
 // SandboxNetworkConfig is the network configuration for sandbox.
 type SandboxNetworkConfig struct {
+	// AllowedDomains is a list of domain names that sandboxed processes can access.
+	AllowedDomains []string `json:"allowedDomains,omitempty"`
+	// DeniedDomains is a list of domains that are always blocked, even if matched by AllowedDomains.
+	DeniedDomains []string `json:"deniedDomains,omitempty"`
+	// AllowManagedDomainsOnly when true in managed settings, only managed-settings AllowedDomains are respected.
+	AllowManagedDomainsOnly bool `json:"allowManagedDomainsOnly,omitempty"`
 	// AllowUnixSockets is a list of Unix socket paths accessible in sandbox (e.g., SSH agents).
 	AllowUnixSockets []string `json:"allowUnixSockets,omitempty"`
 	// AllowAllUnixSockets allows all Unix sockets (less secure).
 	AllowAllUnixSockets bool `json:"allowAllUnixSockets,omitempty"`
 	// AllowLocalBinding allows binding to localhost ports (macOS only).
 	AllowLocalBinding bool `json:"allowLocalBinding,omitempty"`
+	// AllowMachLookup is macOS only: XPC/Mach service names to allow (supports trailing wildcard).
+	AllowMachLookup []string `json:"allowMachLookup,omitempty"`
 	// HTTPProxyPort is the HTTP proxy port if bringing your own proxy.
 	HTTPProxyPort int `json:"httpProxyPort,omitempty"`
 	// SOCKSProxyPort is the SOCKS5 proxy port if bringing your own proxy.
@@ -831,6 +883,20 @@ type ClaudeAgentOptions struct {
 	// with a clear error instead of hanging forever. Zero means default
 	// (60000ms); use a large value to effectively disable.
 	LoadTimeoutMs int
+
+	// IncludeHookEvents enables hook lifecycle events in the message stream.
+	// When true, the CLI emits hook events (PreToolUse, PostToolUse, Stop,
+	// etc.) as HookEventMessage objects.
+	IncludeHookEvents bool
+
+	// StrictMCPConfig when true only uses MCP servers passed via MCPServers,
+	// ignoring all other MCP configurations the CLI would otherwise load.
+	StrictMCPConfig bool
+
+	// SessionStoreFlush controls when transcript mirror entries are flushed.
+	// "batched" (default) coalesces and flushes per turn or threshold.
+	// "eager" flushes after every frame for near-real-time delivery.
+	SessionStoreFlush SessionStoreFlushMode
 }
 
 // -----------------------------------------------------------------------

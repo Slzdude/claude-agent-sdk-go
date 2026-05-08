@@ -107,6 +107,7 @@ func processQuery(
 				// to q.rawOut; the conversion goroutine below parses and forwards it.
 				q.ReportMirrorError(key, errMsg)
 			},
+			configuredOpts.SessionStoreFlush,
 		)
 		q.SetMirrorBatcher(batcher)
 	}

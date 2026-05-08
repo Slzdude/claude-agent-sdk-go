@@ -496,6 +496,11 @@ func (q *queryProto) handleCanUseTool(ctx context.Context, req map[string]any) (
 	}
 	permCtx.ToolUseID = strVal(req, "tool_use_id")
 	permCtx.AgentID = strVal(req, "agent_id")
+	permCtx.BlockedPath = strVal(req, "blocked_path")
+	permCtx.DecisionReason = strVal(req, "decision_reason")
+	permCtx.Title = strVal(req, "title")
+	permCtx.DisplayName = strVal(req, "display_name")
+	permCtx.Description = strVal(req, "description")
 
 	result, err := q.opts.CanUseTool(ctx, toolName, toolInput, permCtx)
 	if err != nil {

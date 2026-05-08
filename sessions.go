@@ -1593,9 +1593,13 @@ func parseSessionInfoFromLite(sessionID string, lite *sessionFileInfo, projectPa
 		tag = ""
 	}
 
-	// CreatedAt from first entry's timestamp (epoch ms).
+	// CreatedAt from the first ISO timestamp found in the head (epoch ms).
+	// Scans the whole head rather than only firstLine because the first
+	// record may be a metadata-only entry (e.g. permission-mode) with no
+	// timestamp field; the first user/assistant record that follows does
+	// carry one. Matches Python SDK's _parse_session_info_from_lite.
 	var createdAt *int64
-	ts := extractJSONStringField(firstLine, "timestamp")
+	ts := extractJSONStringField(head, "timestamp")
 	if ts != "" {
 		ts = strings.TrimSuffix(ts, "Z")
 		ts = strings.TrimSuffix(ts, "+00:00")

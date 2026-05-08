@@ -162,6 +162,7 @@ func NewClaudeSDKClient(ctx context.Context, opts *ClaudeAgentOptions) (*ClaudeS
 				// which calls self._message_send.send_nowait(msg).
 				q.ReportMirrorError(key, errMsg)
 			},
+			configuredOpts.SessionStoreFlush,
 		)
 		q.SetMirrorBatcher(batcher)
 	}

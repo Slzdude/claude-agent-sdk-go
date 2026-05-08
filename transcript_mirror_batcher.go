@@ -42,6 +42,9 @@ type TranscriptMirrorBatcher struct {
 	projectsDir string
 	onError     func(key *SessionKey, errMsg string)
 
+	maxPendingEntries int
+	maxPendingBytes   int
+
 	mu             sync.Mutex
 	pending        []mirrorEntry
 	pendingEntries int
@@ -53,11 +56,21 @@ type TranscriptMirrorBatcher struct {
 // NewTranscriptMirrorBatcher creates a new batcher.
 // projectsDir is the base directory for resolving file paths to SessionKeys.
 // onError is called when store.Append fails after all retries.
-func NewTranscriptMirrorBatcher(store SessionStore, projectsDir string, onError func(key *SessionKey, errMsg string)) *TranscriptMirrorBatcher {
+// flushMode controls when entries are flushed: "batched" (default) coalesces
+// and flushes per turn or threshold; "eager" flushes after every frame.
+func NewTranscriptMirrorBatcher(store SessionStore, projectsDir string, onError func(key *SessionKey, errMsg string), flushMode SessionStoreFlushMode) *TranscriptMirrorBatcher {
+	maxEntries := MirrorMaxPendingEntries
+	maxBytes := MirrorMaxPendingBytes
+	if flushMode == FlushModeEager {
+		maxEntries = 0
+		maxBytes = 0
+	}
 	return &TranscriptMirrorBatcher{
-		store:       store,
-		projectsDir: projectsDir,
-		onError:     onError,
+		store:             store,
+		projectsDir:       projectsDir,
+		onError:           onError,
+		maxPendingEntries: maxEntries,
+		maxPendingBytes:   maxBytes,
 	}
 }
 
@@ -70,7 +83,7 @@ func (b *TranscriptMirrorBatcher) Enqueue(filePath string, entries []SessionStor
 	b.pending = append(b.pending, mirrorEntry{filePath: filePath, entries: entries, bytes: size})
 	b.pendingEntries += len(entries)
 	b.pendingBytes += size
-	shouldFlush := b.pendingEntries > MirrorMaxPendingEntries || b.pendingBytes > MirrorMaxPendingBytes
+	shouldFlush := b.pendingEntries > b.maxPendingEntries || b.pendingBytes > b.maxPendingBytes
 	b.mu.Unlock()
 
 	if shouldFlush {

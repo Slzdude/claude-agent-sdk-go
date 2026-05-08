@@ -184,10 +184,18 @@ type AsyncHookJSONOutput struct {
 	AsyncTimeout int  `json:"asyncTimeout,omitempty"`
 }
 
+// PermissionDecision values for PreToolUseHookSpecificOutput.PermissionDecision.
+const (
+	PermissionDecisionAllow = "allow"
+	PermissionDecisionDeny  = "deny"
+	PermissionDecisionAsk   = "ask"
+	PermissionDecisionDefer = "defer" // Defers the tool use; run stops and ResultMessage carries DeferredToolUse
+)
+
 // PreToolUseHookSpecificOutput is the hook-specific output for PreToolUse.
 type PreToolUseHookSpecificOutput struct {
 	HookEventName            string         `json:"hookEventName"`
-	PermissionDecision       string         `json:"permissionDecision,omitempty"`
+	PermissionDecision       string         `json:"permissionDecision,omitempty"` // "allow", "deny", "ask", or "defer"
 	PermissionDecisionReason string         `json:"permissionDecisionReason,omitempty"`
 	UpdatedInput             map[string]any `json:"updatedInput,omitempty"`
 	AdditionalContext        string         `json:"additionalContext,omitempty"`
@@ -197,7 +205,8 @@ type PreToolUseHookSpecificOutput struct {
 type PostToolUseHookSpecificOutput struct {
 	HookEventName        string `json:"hookEventName"`
 	AdditionalContext    string `json:"additionalContext,omitempty"`
-	UpdatedMCPToolOutput any    `json:"updatedMCPToolOutput,omitempty"`
+	UpdatedToolOutput    any    `json:"updatedToolOutput,omitempty"`    // Replaces tool output for all tools
+	UpdatedMCPToolOutput any    `json:"updatedMCPToolOutput,omitempty"` // Replaces MCP tool output only (prefer UpdatedToolOutput)
 }
 
 // PostToolUseFailureHookSpecificOutput is the hook-specific output for PostToolUseFailure.

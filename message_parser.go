@@ -151,6 +151,20 @@ func parseSystemMessage(raw map[string]any) (Message, error) {
 			msg.Key = key
 		}
 		return msg, nil
+	case "hook_started", "hook_response":
+		hookEventName := strVal(raw, "hook_event")
+		if hookEventName == "" {
+			hookEventName = strVal(raw, "hook_name")
+		}
+		if hookEventName == "" {
+			hookEventName = strVal(raw, "hook_event_name")
+		}
+		return &HookEventMessage{
+			SystemMessage: SystemMessage{Subtype: subtype, Data: raw},
+			HookEventName: hookEventName,
+			SessionID:     strVal(raw, "session_id"),
+			UUID:          strVal(raw, "uuid"),
+		}, nil
 	default:
 		return &SystemMessage{
 			Subtype: subtype,
@@ -250,6 +264,21 @@ func parseResultMessage(raw map[string]any) (*ResultMessage, error) {
 				m.Errors = append(m.Errors, s)
 			}
 		}
+	}
+	if dt, ok := raw["deferred_tool_use"].(map[string]any); ok {
+		var input map[string]any
+		if inp, ok := dt["input"].(map[string]any); ok {
+			input = inp
+		}
+		m.DeferredToolUse = &DeferredToolUse{
+			ID:    strVal(dt, "id"),
+			Name:  strVal(dt, "name"),
+			Input: input,
+		}
+	}
+	if aes, ok := raw["api_error_status"].(float64); ok {
+		v := int(aes)
+		m.APIErrorStatus = &v
 	}
 	return m, nil
 }

@@ -10,11 +10,13 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -23,6 +25,55 @@ const (
 	minimumClaudeCodeVersion = "2.0.0"
 	sdkVersion               = "0.2.0"
 )
+
+// Track live CLI subprocesses so we can terminate them when the parent process
+// exits. This mirrors the TypeScript SDK's parent-exit cleanup and prevents
+// orphaned claude processes from leaking when callers crash or exit before
+// calling Close().
+var (
+	activeChildrenMu sync.Mutex
+	activeChildren   = make(map[*exec.Cmd]struct{})
+)
+
+func registerChild(cmd *exec.Cmd) {
+	activeChildrenMu.Lock()
+	activeChildren[cmd] = struct{}{}
+	activeChildrenMu.Unlock()
+}
+
+func unregisterChild(cmd *exec.Cmd) {
+	activeChildrenMu.Lock()
+	delete(activeChildren, cmd)
+	activeChildrenMu.Unlock()
+}
+
+func killActiveChildren() {
+	activeChildrenMu.Lock()
+	cmds := make([]*exec.Cmd, 0, len(activeChildren))
+	for cmd := range activeChildren {
+		cmds = append(cmds, cmd)
+	}
+	activeChildrenMu.Unlock()
+
+	for _, cmd := range cmds {
+		if cmd.Process != nil {
+			_ = cmd.Process.Signal(syscall.SIGTERM)
+		}
+	}
+}
+
+func init() {
+	// Register signal handler to kill active children on parent exit.
+	// This prevents orphaned claude processes when the parent crashes or exits
+	// without calling Close().
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-c
+		killActiveChildren()
+		os.Exit(1)
+	}()
+}
 
 // transport manages the raw subprocess I/O.
 type cliTransport struct {
@@ -230,6 +281,12 @@ func (t *cliTransport) buildCommand() []string {
 	if opts.SessionStore != nil {
 		cmd = append(cmd, "--session-mirror")
 	}
+	if opts.IncludeHookEvents {
+		cmd = append(cmd, "--include-hook-events")
+	}
+	if opts.StrictMCPConfig {
+		cmd = append(cmd, "--strict-mcp-config")
+	}
 	// --setting-sources: emit if non-nil (even empty slice disables all sources).
 	// Matches Python SDK v0.1.53+ behaviour: `if effective_setting_sources is not None`.
 	if effectiveSettingSources != nil {
@@ -395,6 +452,7 @@ func (t *cliTransport) connect(ctx context.Context) error {
 		}
 		return &CLINotFoundError{CLIPath: t.cliPath, Cause: err}
 	}
+	registerChild(t.cmd)
 
 	scanner := bufio.NewScanner(stdoutPipe)
 	scanner.Buffer(make([]byte, t.maxBufferSize), t.maxBufferSize)
@@ -496,6 +554,9 @@ func (t *cliTransport) close() error {
 	// write and cause the last assistant message to be lost.
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.cmd != nil {
+		unregisterChild(t.cmd)
+	}
 	if t.cmd != nil && t.cmd.Process != nil {
 		// Wait up to 5s for natural exit after stdin close.
 		done := make(chan error, 1)

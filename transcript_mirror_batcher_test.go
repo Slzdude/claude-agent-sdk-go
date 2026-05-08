@@ -81,7 +81,7 @@ func TestTranscriptMirrorBatcher_EnqueueAndFlush(t *testing.T) {
 	var errors []string
 	batcher := NewTranscriptMirrorBatcher(store, "/tmp/projects", func(key *SessionKey, errMsg string) {
 		errors = append(errors, errMsg)
-	})
+	}, FlushModeBatched)
 
 	// Enqueue some entries.
 	batcher.Enqueue("/tmp/projects/proj/sess.jsonl", []SessionStoreEntry{
@@ -112,7 +112,7 @@ func TestTranscriptMirrorBatcher_EnqueueAndFlush(t *testing.T) {
 
 func TestTranscriptMirrorBatcher_CoalesceByPath(t *testing.T) {
 	store := NewInMemorySessionStore()
-	batcher := NewTranscriptMirrorBatcher(store, "/tmp/projects", func(key *SessionKey, errMsg string) {})
+	batcher := NewTranscriptMirrorBatcher(store, "/tmp/projects", func(key *SessionKey, errMsg string) {}, FlushModeBatched)
 
 	// Enqueue to same path multiple times.
 	for i := 0; i < 5; i++ {
@@ -134,7 +134,7 @@ func TestTranscriptMirrorBatcher_ErrorReporting(t *testing.T) {
 	var errors []string
 	batcher := NewTranscriptMirrorBatcher(store, "/tmp/projects", func(key *SessionKey, errMsg string) {
 		errors = append(errors, errMsg)
-	})
+	}, FlushModeBatched)
 
 	// Enqueue to a path that will produce a valid key but the store will handle fine.
 	batcher.Enqueue("/tmp/projects/proj/sess.jsonl", []SessionStoreEntry{
@@ -153,7 +153,7 @@ func TestTranscriptMirrorBatcher_InvalidPath(t *testing.T) {
 	var errors []string
 	batcher := NewTranscriptMirrorBatcher(store, "/tmp/projects", func(key *SessionKey, errMsg string) {
 		errors = append(errors, errMsg)
-	})
+	}, FlushModeBatched)
 
 	// Enqueue to a path outside projects dir — should be dropped silently.
 	batcher.Enqueue("/tmp/other/session.jsonl", []SessionStoreEntry{
@@ -170,7 +170,7 @@ func TestTranscriptMirrorBatcher_InvalidPath(t *testing.T) {
 
 func TestTranscriptMirrorBatcher_Close(t *testing.T) {
 	store := NewInMemorySessionStore()
-	batcher := NewTranscriptMirrorBatcher(store, "/tmp/projects", func(key *SessionKey, errMsg string) {})
+	batcher := NewTranscriptMirrorBatcher(store, "/tmp/projects", func(key *SessionKey, errMsg string) {}, FlushModeBatched)
 
 	batcher.Enqueue("/tmp/projects/proj/sess.jsonl", []SessionStoreEntry{
 		{Type: "user", UUID: "u1"},
