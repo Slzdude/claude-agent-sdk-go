@@ -273,3 +273,19 @@ func TestAgentDefinition(t *testing.T) {
 		t.Errorf("expected 2 tools, got %d", len(def.Tools))
 	}
 }
+
+func TestEffortLevelConstants(t *testing.T) {
+	// Verify all EffortLevel constants match expected values.
+	expected := map[EffortLevel]string{
+		EffortLow:    "low",
+		EffortMedium: "medium",
+		EffortHigh:   "high",
+		EffortXHigh:  "xhigh",
+		EffortMax:    "max",
+	}
+	for level, want := range expected {
+		if string(level) != want {
+			t.Errorf("EffortLevel %v = %q, want %q", level, string(level), want)
+		}
+	}
+}

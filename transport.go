@@ -468,7 +468,17 @@ func (t *cliTransport) drainStderr(r io.Reader) {
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		if line := scanner.Text(); line != "" && t.opts.Stderr != nil {
-			t.opts.Stderr(line)
+			// Isolate per-line so a panic in the user's callback doesn't
+			// terminate the loop and silently drop every subsequent line
+			// for the rest of the session. Matches Python SDK's try/except.
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("[transport] stderr callback panicked: %v", r)
+					}
+				}()
+				t.opts.Stderr(line)
+			}()
 		}
 	}
 }

@@ -43,9 +43,10 @@ const (
 
 // AgentDefinition describes a custom sub-agent.
 type AgentDefinition struct {
-	Description     string   `json:"description"`
-	Prompt          string   `json:"prompt"`
-	Tools           []string `json:"tools,omitempty"`
+	Description string `json:"description"`
+	Prompt      string `json:"prompt"`
+	// Deprecated: passing "Skill" here is deprecated; use Skills instead.
+	Tools []string `json:"tools,omitempty"`
 	DisallowedTools []string `json:"disallowedTools,omitempty"`
 	Model           string   `json:"model,omitempty"` // "sonnet", "opus", "haiku", "inherit", or full model ID
 	Skills          []string `json:"skills,omitempty"`
@@ -636,6 +637,10 @@ type ClaudeAgentOptions struct {
 	// for permission. These tools execute automatically without asking the
 	// user for approval. To restrict which tools are available at all, use
 	// Tools.
+	//
+	// Deprecated: passing "Skill" here is deprecated. Use the Skills option
+	// instead, which configures everything needed (including allowing the
+	// Skill tool).
 	AllowedTools []string
 
 	// DisallowedTools lists tool names that are disallowed. These tools are
@@ -831,6 +836,7 @@ type ClaudeAgentOptions struct {
 	//   - EffortLow — Minimal thinking, fastest responses.
 	//   - EffortMedium — Moderate thinking.
 	//   - EffortHigh — Deep reasoning (default).
+	//   - EffortXHigh — Extended reasoning depth (Opus 4.7 only; falls back to "high" on other models).
 	//   - EffortMax — Maximum effort.
 	//
 	// See https://docs.anthropic.com/en/docs/build-with-claude/effort.

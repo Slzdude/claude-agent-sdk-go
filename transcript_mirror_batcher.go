@@ -87,7 +87,14 @@ func (b *TranscriptMirrorBatcher) Enqueue(filePath string, entries []SessionStor
 	b.mu.Unlock()
 
 	if shouldFlush {
-		go b.drain()
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[TranscriptMirrorBatcher] drain panicked: %v", r)
+				}
+			}()
+			b.drain()
+		}()
 	}
 }
 

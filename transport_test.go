@@ -697,3 +697,36 @@ func (s *noopSessionStore) Delete(key SessionKey) error { return nil }
 func (s *noopSessionStore) ListSubkeys(projectKey, sessionID string) ([]string, error) {
 	return nil, nil
 }
+
+func TestStderrCallbackPanicDoesNotTerminateLoop(t *testing.T) {
+	// Regression: a panic from the user's stderr callback must not
+	// kill the drainStderr goroutine and silently drop subsequent lines.
+	// Matches Python SDK's test_stderr_callback_raise_does_not_terminate_loop.
+	var received []string
+	callCount := 0
+	transport := &cliTransport{
+		opts: &ClaudeAgentOptions{
+			Stderr: func(line string) {
+				received = append(received, line)
+				callCount++
+				if callCount == 1 {
+					panic("simulated handler failure")
+				}
+			},
+		},
+	}
+
+	// Create a pipe to simulate stderr.
+	r, w, _ := os.Pipe()
+	w.Write([]byte("line 1\nline 2\nline 3\n"))
+	w.Close()
+
+	transport.drainStderr(r)
+
+	if len(received) != 3 {
+		t.Errorf("expected 3 lines, got %d: %v", len(received), received)
+	}
+	if received[0] != "line 1" || received[1] != "line 2" || received[2] != "line 3" {
+		t.Errorf("wrong lines: %v", received)
+	}
+}
