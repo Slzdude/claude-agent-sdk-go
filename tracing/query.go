@@ -15,7 +15,7 @@ import (
 // tool/subagent span tracking.
 func TracedQuery(ctx context.Context, prompt string, opts *claude.ClaudeAgentOptions, traceOpts ...TraceOption) (<-chan claude.Message, error) {
 	// Check OTel instrumentation suppression (matches Python's _SUPPRESS_INSTRUMENTATION_KEY check)
-	if IsInstrumentationSuppressed(ctx) {
+	if IsSuppressed(ctx) {
 		return claude.Query(ctx, prompt, opts)
 	}
 
@@ -44,6 +44,9 @@ func TracedQuery(ctx context.Context, prompt string, opts *claude.ClaudeAgentOpt
 		),
 	)
 	span = wrapSpan(span, cfg)
+
+	// Apply context attributes (session.id, user.id, metadata, tags)
+	ApplyContextAttributes(ctx, span)
 
 	// Deep copy opts to avoid mutating the caller's options
 	if opts == nil {

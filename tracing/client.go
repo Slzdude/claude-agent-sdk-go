@@ -49,7 +49,7 @@ func (c *TracedClient) Query(ctx context.Context, prompt string) error {
 // ReceiveResponse wraps ClaudeSDKClient.ReceiveResponse with a per-turn AGENT span.
 func (c *TracedClient) ReceiveResponse(ctx context.Context) <-chan claude.Message {
 	// Check suppression
-	if IsInstrumentationSuppressed(ctx) {
+	if IsSuppressed(ctx) {
 		return c.client.ReceiveResponse(ctx)
 	}
 
@@ -87,6 +87,7 @@ func (c *TracedClient) ReceiveResponse(ctx context.Context) <-chan claude.Messag
 		),
 	)
 	newSpan = wrapSpan(newSpan, c.cfg)
+	ApplyContextAttributes(ctx, newSpan)
 
 	newToolTracker := NewToolSpanTracker(tracer, newSpan, c.cfg)
 	newSubagentTracker := NewSubagentSpanTracker(tracer, newSpan, newToolTracker, c.cfg)
@@ -113,7 +114,7 @@ func (c *TracedClient) ReceiveResponse(ctx context.Context) <-chan claude.Messag
 // long-lived AGENT span.
 func (c *TracedClient) ReceiveMessages(ctx context.Context) <-chan claude.Message {
 	// Check suppression
-	if IsInstrumentationSuppressed(ctx) {
+	if IsSuppressed(ctx) {
 		return c.client.ReceiveMessages(ctx)
 	}
 
@@ -125,6 +126,7 @@ func (c *TracedClient) ReceiveMessages(ctx context.Context) <-chan claude.Messag
 		),
 	)
 	span = wrapSpan(span, c.cfg)
+	ApplyContextAttributes(ctx, span)
 
 	toolTracker := NewToolSpanTracker(tracer, span, c.cfg)
 	subagentTracker := NewSubagentSpanTracker(tracer, span, toolTracker, c.cfg)

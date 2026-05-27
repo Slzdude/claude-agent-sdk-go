@@ -35,6 +35,15 @@ const (
 	// Session
 	SessionID = attribute.Key("session.id")
 
+	// User
+	UserID = attribute.Key("user.id")
+
+	// Metadata (JSON-encoded map)
+	Metadata = attribute.Key("metadata")
+
+	// Tags
+	TagTags = attribute.Key("tag.tags")
+
 	// Tool
 	ToolName       = attribute.Key("tool.name")
 	ToolID         = attribute.Key("tool.id")
