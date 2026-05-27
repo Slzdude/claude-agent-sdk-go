@@ -4,6 +4,8 @@
 *.dll
 *.so
 *.dylib
+/langfuse_tracing
+/otel_collector
 
 # Test binary, built with `go test -c`
 *.test

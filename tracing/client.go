@@ -1,0 +1,166 @@
+package tracing
+
+import (
+	"context"
+	"sync"
+
+	claude "github.com/Slzdude/claude-agent-sdk-go"
+	"github.com/Slzdude/claude-agent-sdk-go/tracing/semconv"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+)
+
+// TracedClient wraps ClaudeSDKClient with per-turn AGENT spans and
+// automatic tool/subagent span tracking.
+type TracedClient struct {
+	client     *claude.ClaudeSDKClient
+	cfg        *TraceConfig
+	tracer     trace.Tracer
+	lastPrompt string
+	mu         sync.Mutex
+	// Trackers for the current turn
+	currentToolSpanTracker     *ToolSpanTracker
+	currentSubagentSpanTracker *SubagentSpanTracker
+	currentSpan                trace.Span
+}
+
+// NewTracedClient creates a TracedClient wrapping an existing ClaudeSDKClient.
+func NewTracedClient(client *claude.ClaudeSDKClient, traceOpts ...TraceOption) *TracedClient {
+	cfg := &TraceConfig{}
+	for _, opt := range traceOpts {
+		opt(cfg)
+	}
+
+	return &TracedClient{
+		client: client,
+		cfg:    cfg,
+		tracer: cfg.resolveTracer(),
+	}
+}
+
+// Query wraps ClaudeSDKClient.Query, recording the prompt for the next ReceiveResponse span.
+func (c *TracedClient) Query(ctx context.Context, prompt string) error {
+	c.mu.Lock()
+	c.lastPrompt = prompt
+	c.mu.Unlock()
+	return c.client.Query(ctx, prompt)
+}
+
+// ReceiveResponse wraps ClaudeSDKClient.ReceiveResponse with a per-turn AGENT span.
+func (c *TracedClient) ReceiveResponse(ctx context.Context) <-chan claude.Message {
+	// Check suppression
+	if IsInstrumentationSuppressed(ctx) {
+		return c.client.ReceiveResponse(ctx)
+	}
+
+	// Create a new AGENT span for this turn
+	spanName := "ClaudeAgentSDK.ReceiveResponse"
+
+	c.mu.Lock()
+	prompt := c.lastPrompt
+	c.lastPrompt = ""
+	span := c.currentSpan
+	toolTracker := c.currentToolSpanTracker
+	subagentTracker := c.currentSubagentSpanTracker
+	c.mu.Unlock()
+
+	// End previous turn's trackers if any
+	if toolTracker != nil {
+		toolTracker.EndAll()
+	}
+	if subagentTracker != nil {
+		subagentTracker.EndAll()
+	}
+	if span != nil {
+		span.End()
+	}
+
+	inputValue, inputMimeType := formatPromptValue(prompt)
+
+	tracer := c.tracer
+	ctx, newSpan := tracer.Start(ctx, spanName,
+		trace.WithAttributes(
+			semconv.SpanKindKey.String("AGENT"),
+			semconv.LLMSystem.String(semconv.LLMSystemAnthropic),
+			semconv.InputValue.String(inputValue),
+			semconv.InputMimeType.String(inputMimeType),
+		),
+	)
+	newSpan = wrapSpan(newSpan, c.cfg)
+
+	newToolTracker := NewToolSpanTracker(tracer, newSpan, c.cfg)
+	newSubagentTracker := NewSubagentSpanTracker(tracer, newSpan, newToolTracker, c.cfg)
+
+	// Wire up subagent detection
+	newToolTracker.SetSubagentCallback(func(toolUseID, agentID, agentType, toolName, parentToolUseID string) {
+		newSubagentTracker.GetOrCreate(toolUseID, agentID, agentType, toolName)
+	})
+
+	c.mu.Lock()
+	c.currentSpan = newSpan
+	c.currentToolSpanTracker = newToolTracker
+	c.currentSubagentSpanTracker = newSubagentTracker
+	c.mu.Unlock()
+
+	// Get the raw message channel
+	msgs := c.client.ReceiveResponse(ctx)
+
+	return wrapMessageChannel(newSpan, msgs, newToolTracker, newSubagentTracker, c.cfg)
+}
+
+// ReceiveMessages wraps ClaudeSDKClient.ReceiveMessages.
+// Note: ReceiveMessages does not close after a single turn, so we create one
+// long-lived AGENT span.
+func (c *TracedClient) ReceiveMessages(ctx context.Context) <-chan claude.Message {
+	// Check suppression
+	if IsInstrumentationSuppressed(ctx) {
+		return c.client.ReceiveMessages(ctx)
+	}
+
+	tracer := c.tracer
+	ctx, span := tracer.Start(ctx, "ClaudeAgentSDK.ReceiveMessages",
+		trace.WithAttributes(
+			semconv.SpanKindKey.String("AGENT"),
+			semconv.LLMSystem.String(semconv.LLMSystemAnthropic),
+		),
+	)
+	span = wrapSpan(span, c.cfg)
+
+	toolTracker := NewToolSpanTracker(tracer, span, c.cfg)
+	subagentTracker := NewSubagentSpanTracker(tracer, span, toolTracker, c.cfg)
+
+	toolTracker.SetSubagentCallback(func(toolUseID, agentID, agentType, toolName, parentToolUseID string) {
+		subagentTracker.GetOrCreate(toolUseID, agentID, agentType, toolName)
+	})
+
+	msgs := c.client.ReceiveMessages(ctx)
+
+	return wrapMessageChannel(span, msgs, toolTracker, subagentTracker, c.cfg)
+}
+
+// Close ends all pending spans and closes the underlying client.
+func (c *TracedClient) Close() error {
+	c.mu.Lock()
+	toolTracker := c.currentToolSpanTracker
+	subagentTracker := c.currentSubagentSpanTracker
+	span := c.currentSpan
+	c.mu.Unlock()
+
+	if toolTracker != nil {
+		toolTracker.EndAll()
+	}
+	if subagentTracker != nil {
+		subagentTracker.EndAll()
+	}
+	if span != nil {
+		span.SetStatus(codes.Ok, "")
+		span.End()
+	}
+
+	return c.client.Close()
+}
+
+// Client returns the underlying ClaudeSDKClient for direct access.
+func (c *TracedClient) Client() *claude.ClaudeSDKClient {
+	return c.client
+}
