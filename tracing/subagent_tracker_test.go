@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	claude "github.com/Slzdude/claude-agent-sdk-go"
-	"github.com/Slzdude/claude-agent-sdk-go/tracing/semconv"
+	semconv "github.com/Arize-ai/openinference/go/openinference-semantic-conventions"
 	"go.opentelemetry.io/otel/codes"
 )
 
@@ -38,11 +38,11 @@ func TestSubagentSpanTracker_GetOrCreate(t *testing.T) {
 		if s.Name == "ClaudeAgentSDK.Task" {
 			found = true
 			attrs := attrMap(s.Attributes)
-			if attrs[string(semconv.AgentName)] != "agent_abc" {
-				t.Errorf("agent name = %q, want agent_abc", attrs[string(semconv.AgentName)])
+			if attrs[semconv.AgentName] != "agent_abc" {
+				t.Errorf("agent name = %q, want agent_abc", attrs[semconv.AgentName])
 			}
-			if attrs[string(semconv.SpanKindKey)] != "AGENT" {
-				t.Errorf("span kind = %q, want AGENT", attrs[string(semconv.SpanKindKey)])
+			if attrs[semconv.OpenInferenceSpanKind] != semconv.SpanKindAgent {
+				t.Errorf("span kind = %q, want %q", attrs[semconv.OpenInferenceSpanKind], semconv.SpanKindAgent)
 			}
 		}
 	}
@@ -165,8 +165,8 @@ func TestSubagentSpanTracker_EndAllAbandoned(t *testing.T) {
 				t.Errorf("abandoned span %q should have ERROR status", s.Name)
 			}
 			attrs := attrMap(s.Attributes)
-			if attrs[string(semconv.ErrorType)] != semconv.ErrorTypeSubagentSpanAbandoned {
-				t.Errorf("expected abandoned error type, got %q", attrs[string(semconv.ErrorType)])
+			if attrs["error.type"] != "subagent_span_abandoned" {
+				t.Errorf("expected abandoned error type, got %q", attrs["error.type"])
 			}
 		}
 	}

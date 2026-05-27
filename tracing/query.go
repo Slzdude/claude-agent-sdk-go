@@ -6,7 +6,8 @@ import (
 	"log/slog"
 
 	claude "github.com/Slzdude/claude-agent-sdk-go"
-	"github.com/Slzdude/claude-agent-sdk-go/tracing/semconv"
+	semconv "github.com/Arize-ai/openinference/go/openinference-semantic-conventions"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -14,7 +15,6 @@ import (
 // TracedQuery wraps claude.Query with an AGENT root span and automatic
 // tool/subagent span tracking.
 func TracedQuery(ctx context.Context, prompt string, opts *claude.ClaudeAgentOptions, traceOpts ...TraceOption) (<-chan claude.Message, error) {
-	// Check OTel instrumentation suppression (matches Python's _SUPPRESS_INSTRUMENTATION_KEY check)
 	if IsSuppressed(ctx) {
 		return claude.Query(ctx, prompt, opts)
 	}
@@ -26,46 +26,38 @@ func TracedQuery(ctx context.Context, prompt string, opts *claude.ClaudeAgentOpt
 
 	tracer := cfg.resolveTracer()
 
-	// Determine span name
 	spanName := "ClaudeAgentSDK.Query"
 	if cfg.SpanNamer != nil {
 		spanName = cfg.SpanNamer(prompt)
 	}
 
-	// Determine input attributes
 	inputValue, inputMimeType := formatPromptValue(prompt)
 
 	ctx, span := tracer.Start(ctx, spanName,
 		trace.WithAttributes(
-			semconv.SpanKindKey.String("AGENT"),
-			semconv.LLMSystem.String(semconv.LLMSystemAnthropic),
-			semconv.InputValue.String(inputValue),
-			semconv.InputMimeType.String(inputMimeType),
+			attribute.String(semconv.OpenInferenceSpanKind, semconv.SpanKindAgent),
+			attribute.String(semconv.LLMSystem, semconv.LLMSystemAnthropic),
+			attribute.String(semconv.InputValue, inputValue),
+			attribute.String(semconv.InputMimeType, inputMimeType),
 		),
 	)
 	span = wrapSpan(span, cfg)
-
-	// Apply context attributes (session.id, user.id, metadata, tags)
 	ApplyContextAttributes(ctx, span)
 
-	// Deep copy opts to avoid mutating the caller's options
 	if opts == nil {
 		opts = &claude.ClaudeAgentOptions{}
 	}
 	instrumentedOpts := *opts
 
-	// Create tool span tracker and inject hooks
 	toolTracker := NewToolSpanTracker(tracer, span, cfg)
 	subagentTracker := NewSubagentSpanTracker(tracer, span, toolTracker, cfg)
 
-	// Wire up subagent detection
 	toolTracker.SetSubagentCallback(func(toolUseID, agentID, agentType, toolName, parentToolUseID string) {
 		subagentTracker.GetOrCreate(toolUseID, agentID, agentType, toolName)
 	})
 
 	toolTracker.InjectHooks(&instrumentedOpts)
 
-	// Call the original Query
 	msgs, err := claude.Query(ctx, prompt, &instrumentedOpts)
 	if err != nil {
 		span.RecordError(err)
@@ -74,11 +66,9 @@ func TracedQuery(ctx context.Context, prompt string, opts *claude.ClaudeAgentOpt
 		return nil, err
 	}
 
-	// Wrap the message channel to extract attributes
 	return wrapMessageChannel(span, msgs, toolTracker, subagentTracker, cfg), nil
 }
 
-// wrapMessageChannel creates a new channel that processes messages for tracing.
 func wrapMessageChannel(
 	rootSpan trace.Span,
 	msgs <-chan claude.Message,
@@ -94,7 +84,6 @@ func wrapMessageChannel(
 		defer toolTracker.EndAll()
 		defer subagentTracker.EndAll()
 
-		// Recover panics during message iteration
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Error("panic in traced message channel", "recover", r)
@@ -105,17 +94,13 @@ func wrapMessageChannel(
 
 		outputMsgIndex := 0
 		for msg := range msgs {
-			// Extract attributes on the appropriate span
 			targetSpan := resolveTargetSpan(rootSpan, subagentTracker, msg)
 			extractMessageAttributes(targetSpan, msg, &outputMsgIndex)
 
-			// Route subagent messages
 			subagentTracker.ProcessMessage(msg)
 
-			// Message-based fallback for tool spans
 			updateToolSpansFromMessages(msg, toolTracker)
 
-			// Forward message
 			out <- msg
 		}
 	}()
@@ -123,8 +108,6 @@ func wrapMessageChannel(
 	return out
 }
 
-// resolveTargetSpan returns the subagent span if the message belongs to a subagent,
-// otherwise the root span.
 func resolveTargetSpan(rootSpan trace.Span, subagentTracker *SubagentSpanTracker, msg claude.Message) trace.Span {
 	if parentID := getParentToolUseID(msg); parentID != "" {
 		if subSpan := subagentTracker.GetByToolUseID(parentID); subSpan != nil {
@@ -134,7 +117,6 @@ func resolveTargetSpan(rootSpan trace.Span, subagentTracker *SubagentSpanTracker
 	return rootSpan
 }
 
-// getParentToolUseID extracts parent_tool_use_id from a message.
 func getParentToolUseID(msg claude.Message) string {
 	switch m := msg.(type) {
 	case *claude.AssistantMessage:
@@ -151,9 +133,6 @@ func getParentToolUseID(msg claude.Message) string {
 	return ""
 }
 
-// updateToolSpansFromMessages provides a message-based fallback for tool span tracking.
-// Scans message content for tool_use and tool_result blocks.
-// Handles both AssistantMessage (carries tool_use) and UserMessage (carries tool_result).
 func updateToolSpansFromMessages(msg claude.Message, tracker *ToolSpanTracker) {
 	content := extractContentBlocks(msg)
 	for _, block := range content {
@@ -170,7 +149,6 @@ func updateToolSpansFromMessages(msg claude.Message, tracker *ToolSpanTracker) {
 	}
 }
 
-// extractContentBlocks extracts content blocks from any message type.
 func extractContentBlocks(msg claude.Message) []claude.ContentBlock {
 	switch m := msg.(type) {
 	case *claude.AssistantMessage:

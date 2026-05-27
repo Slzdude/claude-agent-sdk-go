@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	claude "github.com/Slzdude/claude-agent-sdk-go"
-	"github.com/Slzdude/claude-agent-sdk-go/tracing/semconv"
+	semconv "github.com/Arize-ai/openinference/go/openinference-semantic-conventions"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -46,17 +46,16 @@ func TestToolSpanTracker_StartEnd(t *testing.T) {
 	}
 
 	attrs := attrMap(toolSpan.Attributes)
-	if attrs[string(semconv.SpanKindKey)] != "TOOL" {
-		t.Errorf("span kind = %q, want TOOL", attrs[string(semconv.SpanKindKey)])
+	if attrs[semconv.OpenInferenceSpanKind] != semconv.SpanKindTool {
+		t.Errorf("span kind = %q, want %q", attrs[semconv.OpenInferenceSpanKind], semconv.SpanKindTool)
 	}
-	if attrs[string(semconv.ToolName)] != "Bash" {
-		t.Errorf("tool name = %q, want Bash", attrs[string(semconv.ToolName)])
+	if attrs[semconv.ToolName] != "Bash" {
+		t.Errorf("tool name = %q, want Bash", attrs[semconv.ToolName])
 	}
-	if attrs[string(semconv.ToolID)] != "tool_1" {
-		t.Errorf("tool id = %q, want tool_1", attrs[string(semconv.ToolID)])
+	if attrs[semconv.ToolID] != "tool_1" {
+		t.Errorf("tool id = %q, want tool_1", attrs[semconv.ToolID])
 	}
-	// Check tool.parameters is set
-	if attrs[string(semconv.ToolParameters)] == "" {
+	if attrs[semconv.ToolParameters] == "" {
 		t.Error("tool.parameters should be set")
 	}
 }
@@ -70,7 +69,7 @@ func TestToolSpanTracker_Deduplication(t *testing.T) {
 
 	tracker := NewToolSpanTracker(tracer, rootSpan, nil)
 	ok1 := tracker.Start("tool_1", "Bash", nil, "")
-	ok2 := tracker.Start("tool_1", "Bash", nil, "") // duplicate
+	ok2 := tracker.Start("tool_1", "Bash", nil, "")
 
 	if !ok1 {
 		t.Error("first Start should return true")
@@ -83,7 +82,6 @@ func TestToolSpanTracker_Deduplication(t *testing.T) {
 	rootSpan.End()
 
 	spans := exporter.GetSpans()
-	// Should be root + 1 tool (not 2)
 	if len(spans) != 2 {
 		t.Errorf("expected 2 spans (root + 1 tool), got %d", len(spans))
 	}
@@ -162,7 +160,6 @@ func TestToolSpanTracker_InjectHooks_MergesUserHooks(t *testing.T) {
 
 	tracker.InjectHooks(opts)
 
-	// Should have user hook + instrumentation hook + sentinel
 	if len(opts.Hooks[claude.HookEventPreToolUse]) != 3 {
 		t.Errorf("expected 3 PreToolUse hooks, got %d", len(opts.Hooks[claude.HookEventPreToolUse]))
 	}
@@ -179,12 +176,10 @@ func TestToolSpanTracker_InjectHooks_NoAccumulation(t *testing.T) {
 
 	opts := &claude.ClaudeAgentOptions{}
 
-	// Inject multiple times
 	tracker.InjectHooks(opts)
 	tracker.InjectHooks(opts)
 	tracker.InjectHooks(opts)
 
-	// Should only have 1 sentinel + 1 instrumentation hook per event
 	if len(opts.Hooks[claude.HookEventPreToolUse]) != 2 {
 		t.Errorf("expected 2 PreToolUse hooks (no accumulation), got %d", len(opts.Hooks[claude.HookEventPreToolUse]))
 	}
@@ -202,7 +197,6 @@ func TestToolSpanTracker_PanicRecovery(t *testing.T) {
 	opts := &claude.ClaudeAgentOptions{}
 	tracker.InjectHooks(opts)
 
-	// The hooks should have panic recovery built in
 	if len(opts.Hooks[claude.HookEventPreToolUse]) < 2 {
 		t.Error("expected at least 2 hooks")
 	}
@@ -244,10 +238,9 @@ func TestToolSpanTracker_WithAttributeFilter(t *testing.T) {
 	tracer := tp.Tracer("test")
 	_, rootSpan := tracer.Start(context.Background(), "root")
 
-	// Filter that drops input.value (PII redaction)
 	cfg := &TraceConfig{
 		AttributeFilter: func(kv attribute.KeyValue) bool {
-			return kv.Key != semconv.InputValue
+			return kv.Key != attribute.Key(semconv.InputValue)
 		},
 	}
 
@@ -259,10 +252,10 @@ func TestToolSpanTracker_WithAttributeFilter(t *testing.T) {
 
 	spans := exporter.GetSpans()
 	attrs := attrMap(spans[0].Attributes)
-	if attrs[string(semconv.InputValue)] != "" {
+	if attrs[semconv.InputValue] != "" {
 		t.Error("input.value should be filtered out by AttributeFilter")
 	}
-	if attrs[string(semconv.ToolName)] != "Bash" {
+	if attrs[semconv.ToolName] != "Bash" {
 		t.Error("tool.name should still be present")
 	}
 }

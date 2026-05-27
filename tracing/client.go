@@ -5,7 +5,8 @@ import (
 	"sync"
 
 	claude "github.com/Slzdude/claude-agent-sdk-go"
-	"github.com/Slzdude/claude-agent-sdk-go/tracing/semconv"
+	semconv "github.com/Arize-ai/openinference/go/openinference-semantic-conventions"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -18,7 +19,6 @@ type TracedClient struct {
 	tracer     trace.Tracer
 	lastPrompt string
 	mu         sync.Mutex
-	// Trackers for the current turn
 	currentToolSpanTracker     *ToolSpanTracker
 	currentSubagentSpanTracker *SubagentSpanTracker
 	currentSpan                trace.Span
@@ -48,12 +48,10 @@ func (c *TracedClient) Query(ctx context.Context, prompt string) error {
 
 // ReceiveResponse wraps ClaudeSDKClient.ReceiveResponse with a per-turn AGENT span.
 func (c *TracedClient) ReceiveResponse(ctx context.Context) <-chan claude.Message {
-	// Check suppression
 	if IsSuppressed(ctx) {
 		return c.client.ReceiveResponse(ctx)
 	}
 
-	// Create a new AGENT span for this turn
 	spanName := "ClaudeAgentSDK.ReceiveResponse"
 
 	c.mu.Lock()
@@ -64,7 +62,6 @@ func (c *TracedClient) ReceiveResponse(ctx context.Context) <-chan claude.Messag
 	subagentTracker := c.currentSubagentSpanTracker
 	c.mu.Unlock()
 
-	// End previous turn's trackers if any
 	if toolTracker != nil {
 		toolTracker.EndAll()
 	}
@@ -80,10 +77,10 @@ func (c *TracedClient) ReceiveResponse(ctx context.Context) <-chan claude.Messag
 	tracer := c.tracer
 	ctx, newSpan := tracer.Start(ctx, spanName,
 		trace.WithAttributes(
-			semconv.SpanKindKey.String("AGENT"),
-			semconv.LLMSystem.String(semconv.LLMSystemAnthropic),
-			semconv.InputValue.String(inputValue),
-			semconv.InputMimeType.String(inputMimeType),
+			attribute.String(semconv.OpenInferenceSpanKind, semconv.SpanKindAgent),
+			attribute.String(semconv.LLMSystem, semconv.LLMSystemAnthropic),
+			attribute.String(semconv.InputValue, inputValue),
+			attribute.String(semconv.InputMimeType, inputMimeType),
 		),
 	)
 	newSpan = wrapSpan(newSpan, c.cfg)
@@ -92,7 +89,6 @@ func (c *TracedClient) ReceiveResponse(ctx context.Context) <-chan claude.Messag
 	newToolTracker := NewToolSpanTracker(tracer, newSpan, c.cfg)
 	newSubagentTracker := NewSubagentSpanTracker(tracer, newSpan, newToolTracker, c.cfg)
 
-	// Wire up subagent detection
 	newToolTracker.SetSubagentCallback(func(toolUseID, agentID, agentType, toolName, parentToolUseID string) {
 		newSubagentTracker.GetOrCreate(toolUseID, agentID, agentType, toolName)
 	})
@@ -103,17 +99,13 @@ func (c *TracedClient) ReceiveResponse(ctx context.Context) <-chan claude.Messag
 	c.currentSubagentSpanTracker = newSubagentTracker
 	c.mu.Unlock()
 
-	// Get the raw message channel
 	msgs := c.client.ReceiveResponse(ctx)
 
 	return wrapMessageChannel(newSpan, msgs, newToolTracker, newSubagentTracker, c.cfg)
 }
 
 // ReceiveMessages wraps ClaudeSDKClient.ReceiveMessages.
-// Note: ReceiveMessages does not close after a single turn, so we create one
-// long-lived AGENT span.
 func (c *TracedClient) ReceiveMessages(ctx context.Context) <-chan claude.Message {
-	// Check suppression
 	if IsSuppressed(ctx) {
 		return c.client.ReceiveMessages(ctx)
 	}
@@ -121,8 +113,8 @@ func (c *TracedClient) ReceiveMessages(ctx context.Context) <-chan claude.Messag
 	tracer := c.tracer
 	ctx, span := tracer.Start(ctx, "ClaudeAgentSDK.ReceiveMessages",
 		trace.WithAttributes(
-			semconv.SpanKindKey.String("AGENT"),
-			semconv.LLMSystem.String(semconv.LLMSystemAnthropic),
+			attribute.String(semconv.OpenInferenceSpanKind, semconv.SpanKindAgent),
+			attribute.String(semconv.LLMSystem, semconv.LLMSystemAnthropic),
 		),
 	)
 	span = wrapSpan(span, c.cfg)

@@ -8,7 +8,8 @@ import (
 	"sync"
 
 	claude "github.com/Slzdude/claude-agent-sdk-go"
-	"github.com/Slzdude/claude-agent-sdk-go/tracing/semconv"
+	semconv "github.com/Arize-ai/openinference/go/openinference-semantic-conventions"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -20,7 +21,6 @@ type ToolSpanTracker struct {
 	cfg        *TraceConfig
 	mu         sync.Mutex
 	spans      map[string]trace.Span
-	// subagentCallback is called when a tool has agent_id (subagent detection).
 	subagentCallback func(toolUseID, agentID, agentType, toolName, parentToolUseID string)
 }
 
@@ -45,7 +45,6 @@ func (t *ToolSpanTracker) Start(toolUseID, toolName string, input map[string]any
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	// Deduplication: don't create duplicate spans
 	if _, exists := t.spans[toolUseID]; exists {
 		return false
 	}
@@ -53,20 +52,19 @@ func (t *ToolSpanTracker) Start(toolUseID, toolName string, input map[string]any
 	ctx := trace.ContextWithSpan(context.Background(), t.parentSpan)
 	_, span := t.tracer.Start(ctx, toolName,
 		trace.WithAttributes(
-			semconv.SpanKindKey.String("TOOL"),
-			semconv.ToolName.String(toolName),
-			semconv.ToolID.String(toolUseID),
+			attribute.String(semconv.OpenInferenceSpanKind, semconv.SpanKindTool),
+			attribute.String(semconv.ToolName, toolName),
+			attribute.String(semconv.ToolID, toolUseID),
 		),
 	)
-
 	span = wrapSpan(span, t.cfg)
 
 	if input != nil {
 		if inputJSON, err := json.Marshal(input); err == nil {
 			span.SetAttributes(
-				semconv.InputValue.String(string(inputJSON)),
-				semconv.InputMimeType.String(semconv.MimeTypeJSON),
-				semconv.ToolParameters.String(string(inputJSON)),
+				attribute.String(semconv.InputValue, string(inputJSON)),
+				attribute.String(semconv.InputMimeType, semconv.MimeTypeJSON),
+				attribute.String(semconv.ToolParameters, string(inputJSON)),
 			)
 		}
 	}
@@ -91,8 +89,8 @@ func (t *ToolSpanTracker) End(toolUseID string, output any) {
 	if output != nil {
 		if outputJSON, err := json.Marshal(output); err == nil {
 			span.SetAttributes(
-				semconv.OutputValue.String(string(outputJSON)),
-				semconv.OutputMimeType.String(semconv.MimeTypeJSON),
+				attribute.String(semconv.OutputValue, string(outputJSON)),
+				attribute.String(semconv.OutputMimeType, semconv.MimeTypeJSON),
 			)
 		}
 	}
@@ -130,7 +128,7 @@ func (t *ToolSpanTracker) EndAll() {
 	t.mu.Unlock()
 
 	for id, span := range spans {
-		span.SetAttributes(semconv.ErrorType.String(semconv.ErrorTypeToolSpanAbandoned))
+		span.SetAttributes(attribute.String("error.type", "tool_span_abandoned"))
 		span.SetStatus(codes.Error, fmt.Sprintf("tool span abandoned: %s", id))
 		span.End()
 	}
@@ -145,21 +143,17 @@ func (t *ToolSpanTracker) GetInFlightSpan(toolUseID string) (trace.Span, bool) {
 }
 
 // InjectHooks injects instrumentation hooks into ClaudeAgentOptions.
-// Uses a sentinel key in the hooks map to avoid duplicate injection.
 func (t *ToolSpanTracker) InjectHooks(opts *claude.ClaudeAgentOptions) {
 	if opts.Hooks == nil {
 		opts.Hooks = make(map[claude.HookEvent][]claude.HookMatcher)
 	}
 
-	// Check if already injected (avoid accumulation on multi-turn)
 	if t.hooksInjected(opts) {
 		return
 	}
 
-	// PreToolUse hook
 	preHook := claude.HookCallback(func(ctx context.Context, input map[string]any, toolUseID string) (map[string]any, error) {
 		defer safeRecover("PreToolUse hook")
-
 		toolName, _ := input["tool_name"].(string)
 		toolInput, _ := input["tool_input"].(map[string]any)
 		agentID, _ := input["agent_id"].(string)
@@ -168,7 +162,6 @@ func (t *ToolSpanTracker) InjectHooks(opts *claude.ClaudeAgentOptions) {
 
 		t.Start(toolUseID, toolName, toolInput, parentToolUseID)
 
-		// Subagent detection
 		if agentID != "" && t.subagentCallback != nil {
 			t.subagentCallback(toolUseID, agentID, agentType, toolName, parentToolUseID)
 		}
@@ -176,19 +169,15 @@ func (t *ToolSpanTracker) InjectHooks(opts *claude.ClaudeAgentOptions) {
 		return nil, nil
 	})
 
-	// PostToolUse hook
 	postHook := claude.HookCallback(func(ctx context.Context, input map[string]any, toolUseID string) (map[string]any, error) {
 		defer safeRecover("PostToolUse hook")
-
 		output := input["tool_response"]
 		t.End(toolUseID, output)
 		return nil, nil
 	})
 
-	// PostToolUseFailure hook
 	postFailHook := claude.HookCallback(func(ctx context.Context, input map[string]any, toolUseID string) (map[string]any, error) {
 		defer safeRecover("PostToolUseFailure hook")
-
 		errMsg, _ := input["error"].(string)
 		if errMsg == "" {
 			errMsg = "tool execution failed"
@@ -197,7 +186,6 @@ func (t *ToolSpanTracker) InjectHooks(opts *claude.ClaudeAgentOptions) {
 		return nil, nil
 	})
 
-	// Merge with existing hooks (preserve user hooks)
 	opts.Hooks[claude.HookEventPreToolUse] = append(opts.Hooks[claude.HookEventPreToolUse], claude.HookMatcher{
 		Hooks: []claude.HookCallback{preHook},
 	})
@@ -208,21 +196,13 @@ func (t *ToolSpanTracker) InjectHooks(opts *claude.ClaudeAgentOptions) {
 		Hooks: []claude.HookCallback{postFailHook},
 	})
 
-	// Mark as injected
 	t.markHooksInjected(opts)
 }
 
-// hooksInjected checks if our hooks are already in the options.
 func (t *ToolSpanTracker) hooksInjected(opts *claude.ClaudeAgentOptions) bool {
-	// Check if any PreToolUse hook matcher has our sentinel callback count.
-	// We use the number of matchers as a simple heuristic: if there are more
-	// than the original user hooks, we've already injected.
-	// A more robust approach: check if the last hook is ours by marker.
-	// For simplicity, we check if the hooks map has our marker key.
 	if opts.Hooks == nil {
 		return false
 	}
-	// Use a special nil-matcher entry as sentinel
 	for _, m := range opts.Hooks[claude.HookEventPreToolUse] {
 		if m.Matcher != nil && *m.Matcher == "__tracing_injected__" {
 			return true
@@ -235,7 +215,7 @@ func (t *ToolSpanTracker) markHooksInjected(opts *claude.ClaudeAgentOptions) {
 	sentinel := "__tracing_injected__"
 	opts.Hooks[claude.HookEventPreToolUse] = append(opts.Hooks[claude.HookEventPreToolUse], claude.HookMatcher{
 		Matcher: &sentinel,
-		Hooks:   nil, // marker only, no callback
+		Hooks:   nil,
 	})
 }
 

@@ -6,7 +6,8 @@ import (
 	"sync"
 
 	claude "github.com/Slzdude/claude-agent-sdk-go"
-	"github.com/Slzdude/claude-agent-sdk-go/tracing/semconv"
+	semconv "github.com/Arize-ai/openinference/go/openinference-semantic-conventions"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -18,9 +19,7 @@ type SubagentSpanTracker struct {
 	toolTracker *ToolSpanTracker
 	cfg         *TraceConfig
 	mu          sync.Mutex
-	// agents maps agentID -> span
-	agents map[string]trace.Span
-	// toolToAgent maps toolUseID -> agentID for parent resolution
+	agents      map[string]trace.Span
 	toolToAgent map[string]string
 }
 
@@ -41,12 +40,10 @@ func (s *SubagentSpanTracker) GetOrCreate(toolUseID, agentID, agentType, toolNam
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Return existing span if already tracked
 	if span, ok := s.agents[agentID]; ok {
 		return span
 	}
 
-	// Determine parent: the tool span if it exists, otherwise root span
 	parentCtx := trace.ContextWithSpan(context.TODO(), s.rootSpan)
 	if toolSpan, ok := s.toolTracker.GetInFlightSpan(toolUseID); ok {
 		parentCtx = trace.ContextWithSpan(context.TODO(), toolSpan)
@@ -55,8 +52,8 @@ func (s *SubagentSpanTracker) GetOrCreate(toolUseID, agentID, agentType, toolNam
 	spanName := fmt.Sprintf("ClaudeAgentSDK.%s", toolName)
 	_, span := s.tracer.Start(parentCtx, spanName,
 		trace.WithAttributes(
-			semconv.SpanKindKey.String("AGENT"),
-			semconv.AgentName.String(agentID),
+			attribute.String(semconv.OpenInferenceSpanKind, semconv.SpanKindAgent),
+			attribute.String(semconv.AgentName, agentID),
 		),
 	)
 	span = wrapSpan(span, s.cfg)
@@ -83,20 +80,17 @@ func (s *SubagentSpanTracker) ProcessMessage(msg claude.Message) {
 	case *claude.TaskNotificationMessage:
 		s.handleTaskNotification(m)
 	case *claude.TaskStartedMessage:
-		// Task started - the subagent span should already exist from hook detection.
-		// If not, we could create one here, but we lack agentID info from the message.
+		// Subagent span should already exist from hook detection.
 	case *claude.TaskProgressMessage:
-		// Progress updates - no action needed for span lifecycle.
+		// No action needed for span lifecycle.
 	}
 }
 
 // handleTaskNotification ends a subagent span when the task finishes.
 func (s *SubagentSpanTracker) handleTaskNotification(msg *claude.TaskNotificationMessage) {
 	s.mu.Lock()
-	// Find agentID from ToolUseID
 	agentID := s.toolToAgent[msg.ToolUseID]
 	if agentID == "" {
-		// Try to find by task ID
 		for aid := range s.agents {
 			agentID = aid
 			break
@@ -137,7 +131,7 @@ func (s *SubagentSpanTracker) EndAll() {
 	s.mu.Unlock()
 
 	for id, span := range agents {
-		span.SetAttributes(semconv.ErrorType.String(semconv.ErrorTypeSubagentSpanAbandoned))
+		span.SetAttributes(attribute.String("error.type", "subagent_span_abandoned"))
 		span.SetStatus(codes.Error, fmt.Sprintf("subagent span abandoned: %s", id))
 		span.End()
 	}

@@ -3,6 +3,8 @@ module github.com/Slzdude/claude-agent-sdk-go
 go 1.25.0
 
 require (
+	github.com/Arize-ai/openinference/go/openinference-instrumentation v0.1.1
+	github.com/Arize-ai/openinference/go/openinference-semantic-conventions v0.1.1
 	github.com/aws/aws-sdk-go-v2 v1.41.6
 	github.com/aws/aws-sdk-go-v2/config v1.32.16
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.15

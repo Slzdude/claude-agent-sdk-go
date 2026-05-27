@@ -3,9 +3,10 @@ package tracing
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 
 	claude "github.com/Slzdude/claude-agent-sdk-go"
-	"github.com/Slzdude/claude-agent-sdk-go/tracing/semconv"
+	semconv "github.com/Arize-ai/openinference/go/openinference-semantic-conventions"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -37,27 +38,23 @@ func extractSystemMessageAttributes(span trace.Span, msg *claude.SystemMessage) 
 		return
 	}
 	if sid, ok := msg.Data["session_id"].(string); ok && sid != "" {
-		span.SetAttributes(semconv.SessionID.String(sid))
+		span.SetAttributes(attribute.String(semconv.SessionID, sid))
 	}
-	// Check both "model" and "model_name" variants
 	if model := extractModelFromMap(msg.Data); model != "" {
-		span.SetAttributes(semconv.LLMModelName.String(model))
+		span.SetAttributes(attribute.String(semconv.LLMModelName, model))
 	}
 }
 
 // extractAssistantMessageAttributes extracts model, usage, and output messages.
 func extractAssistantMessageAttributes(span trace.Span, msg *claude.AssistantMessage, outputMsgIndex *int) {
-	// Model name - check multiple locations
 	if model := extractModelFromAssistant(msg); model != "" {
-		span.SetAttributes(semconv.LLMModelName.String(model))
+		span.SetAttributes(attribute.String(semconv.LLMModelName, model))
 	}
 
-	// Usage from assistant message
 	if msg.Usage != nil {
 		setUsageFromMap(span, msg.Usage)
 	}
 
-	// Output messages - increment index for each assistant message with content
 	if len(msg.Content) > 0 {
 		extractOutputMessages(span, msg.Content, *outputMsgIndex)
 		*outputMsgIndex++
@@ -66,37 +63,31 @@ func extractAssistantMessageAttributes(span trace.Span, msg *claude.AssistantMes
 
 // extractResultMessageAttributes extracts all terminal result attributes.
 func extractResultMessageAttributes(span trace.Span, msg *claude.ResultMessage) {
-	// Session ID
 	if msg.SessionID != "" {
-		span.SetAttributes(semconv.SessionID.String(msg.SessionID))
+		span.SetAttributes(attribute.String(semconv.SessionID, msg.SessionID))
 	}
 
-	// Token usage
 	if msg.Usage != nil {
 		setUsageFromMap(span, msg.Usage)
 	}
 
-	// Model usage (may contain per-model breakdown)
 	if msg.ModelUsage != nil {
 		for _, v := range msg.ModelUsage {
 			extractModelUsageEntry(span, v)
 		}
 	}
 
-	// Cost
 	if msg.TotalCostUSD != nil && *msg.TotalCostUSD > 0 {
-		span.SetAttributes(semconv.LLMCostTotal.Float64(*msg.TotalCostUSD))
+		span.SetAttributes(attribute.Float64(semconv.LLMCostTotal, *msg.TotalCostUSD))
 	}
 
-	// Output value
 	if msg.Result != "" {
 		span.SetAttributes(
-			semconv.OutputValue.String(msg.Result),
-			semconv.OutputMimeType.String(semconv.MimeTypeText),
+			attribute.String(semconv.OutputValue, msg.Result),
+			attribute.String(semconv.OutputMimeType, semconv.MimeTypeText),
 		)
 	}
 
-	// Status
 	if msg.Subtype == "success" {
 		span.SetStatus(codes.Ok, "")
 	} else if msg.Subtype == "error" || msg.IsError {
@@ -109,34 +100,31 @@ func extractResultMessageAttributes(span trace.Span, msg *claude.ResultMessage) 
 }
 
 // extractTaskStartedAttributes extracts attributes from TaskStartedMessage.
-// TaskStartedMessage embeds SystemMessage, so we also extract model from Data.
 func extractTaskStartedAttributes(span trace.Span, msg *claude.TaskStartedMessage) {
 	if msg.SessionID != "" {
-		span.SetAttributes(semconv.SessionID.String(msg.SessionID))
+		span.SetAttributes(attribute.String(semconv.SessionID, msg.SessionID))
 	}
-	// Extract model from embedded SystemMessage.Data
 	if msg.Data != nil {
 		if model := extractModelFromMap(msg.Data); model != "" {
-			span.SetAttributes(semconv.LLMModelName.String(model))
+			span.SetAttributes(attribute.String(semconv.LLMModelName, model))
 		}
 	}
 }
 
 // extractTaskProgressAttributes extracts attributes from TaskProgressMessage.
 func extractTaskProgressAttributes(span trace.Span, msg *claude.TaskProgressMessage) {
-	// TaskProgressMessage carries usage stats for the subagent
 	if msg.Usage.TotalTokens > 0 {
-		span.SetAttributes(semconv.LLMTokenCountTotal.Int64(int64(msg.Usage.TotalTokens)))
+		span.SetAttributes(attribute.Int64(semconv.LLMTokenCountTotal, int64(msg.Usage.TotalTokens)))
 	}
 }
 
 // extractTaskNotificationAttributes extracts attributes from TaskNotificationMessage.
 func extractTaskNotificationAttributes(span trace.Span, msg *claude.TaskNotificationMessage) {
 	if msg.SessionID != "" {
-		span.SetAttributes(semconv.SessionID.String(msg.SessionID))
+		span.SetAttributes(attribute.String(semconv.SessionID, msg.SessionID))
 	}
 	if msg.Usage != nil && msg.Usage.TotalTokens > 0 {
-		span.SetAttributes(semconv.LLMTokenCountTotal.Int64(int64(msg.Usage.TotalTokens)))
+		span.SetAttributes(attribute.Int64(semconv.LLMTokenCountTotal, int64(msg.Usage.TotalTokens)))
 	}
 }
 
@@ -156,33 +144,29 @@ func extractModelUsageEntry(span trace.Span, v any) {
 	case map[string]any:
 		setUsageFromMap(span, entry)
 		if model := extractModelFromMap(entry); model != "" {
-			span.SetAttributes(semconv.LLMModelName.String(model))
+			span.SetAttributes(attribute.String(semconv.LLMModelName, model))
 		}
 	case []any:
-		// List of model usage entries
 		for _, item := range entry {
 			if m, ok := item.(map[string]any); ok {
 				setUsageFromMap(span, m)
 				if model := extractModelFromMap(m); model != "" {
-					span.SetAttributes(semconv.LLMModelName.String(model))
+					span.SetAttributes(attribute.String(semconv.LLMModelName, model))
 				}
 			}
 		}
 	}
 }
 
-// extractModelFromAssistant extracts model from an AssistantMessage, checking multiple locations.
+// extractModelFromAssistant extracts model from an AssistantMessage.
 func extractModelFromAssistant(msg *claude.AssistantMessage) string {
-	// Direct field
 	if msg.Model != "" {
 		return msg.Model
 	}
-	// Nested in usage
 	if msg.Usage != nil {
 		if model := extractModelFromMap(msg.Usage); model != "" {
 			return model
 		}
-		// Check usage.modelUsage / usage.model_usage
 		for _, key := range []string{"modelUsage", "model_usage"} {
 			if mu, ok := msg.Usage[key]; ok {
 				switch v := mu.(type) {
@@ -206,25 +190,24 @@ func setUsageFromMap(span trace.Span, usage map[string]any) {
 	attrs := make([]attribute.KeyValue, 0, 6)
 
 	if v := safeInt(usage, "input_tokens"); v > 0 {
-		attrs = append(attrs, semconv.LLMTokenCountPrompt.Int64(int64(v)))
+		attrs = append(attrs, attribute.Int64(semconv.LLMTokenCountPrompt, int64(v)))
 	}
 	if v := safeInt(usage, "output_tokens"); v > 0 {
-		attrs = append(attrs, semconv.LLMTokenCountCompletion.Int64(int64(v)))
+		attrs = append(attrs, attribute.Int64(semconv.LLMTokenCountCompletion, int64(v)))
 	}
 	total := safeInt(usage, "input_tokens") + safeInt(usage, "output_tokens")
 	if total > 0 {
-		attrs = append(attrs, semconv.LLMTokenCountTotal.Int64(int64(total)))
+		attrs = append(attrs, attribute.Int64(semconv.LLMTokenCountTotal, int64(total)))
 	}
 	if v := safeInt(usage, "cache_read_input_tokens"); v > 0 {
-		attrs = append(attrs, semconv.LLMTokenCountCacheRead.Int64(int64(v)))
+		attrs = append(attrs, attribute.Int64(semconv.LLMTokenCountPromptDetailsCacheRead, int64(v)))
 	}
-	// Merge cache_write and cache_creation: prefer cache_write, fall back to cache_creation
 	cacheWrite := safeInt(usage, "cache_write_input_tokens")
 	if cacheWrite == 0 {
 		cacheWrite = safeInt(usage, "cache_creation_input_tokens")
 	}
 	if cacheWrite > 0 {
-		attrs = append(attrs, semconv.LLMTokenCountCacheWrite.Int64(int64(cacheWrite)))
+		attrs = append(attrs, attribute.Int64(semconv.LLMTokenCountPromptDetailsCacheWrite, int64(cacheWrite)))
 	}
 
 	if len(attrs) > 0 {
@@ -234,8 +217,7 @@ func setUsageFromMap(span trace.Span, usage map[string]any) {
 
 // extractOutputMessages sets llm.output_messages.N.* attributes.
 func extractOutputMessages(span trace.Span, content []claude.ContentBlock, msgIndex int) {
-	roleKey := semconv.OutputMessageAttr(msgIndex, semconv.OutputMessageRole)
-	span.SetAttributes(roleKey.String("assistant"))
+	span.SetAttributes(attribute.String(semconv.LLMOutputMessageRoleKey(msgIndex), "assistant"))
 
 	contentIdx := 0
 	toolCallIdx := 0
@@ -244,19 +226,23 @@ func extractOutputMessages(span trace.Span, content []claude.ContentBlock, msgIn
 		switch b := block.(type) {
 		case *claude.TextBlock:
 			if b.Text != "" {
-				key := semconv.OutputMessageContentAttr(msgIndex, contentIdx)
-				span.SetAttributes(key.String(b.Text))
+				// Official LLMOutputMessageContentKey(i) returns "llm.output_messages.{i}.message.content"
+				// For indexed content blocks, append the index.
+				key := semconv.LLMOutputMessageContentKey(msgIndex) + "." + strconv.Itoa(contentIdx)
+				span.SetAttributes(attribute.String(key, b.Text))
 				contentIdx++
 			}
 		case *claude.ToolUseBlock:
-			idKey := semconv.OutputMessageToolCallAttr(msgIndex, toolCallIdx, semconv.ToolCallID)
-			nameKey := semconv.OutputMessageToolCallAttr(msgIndex, toolCallIdx, semconv.ToolCallFunctionName)
-			span.SetAttributes(idKey.String(b.ID), nameKey.String(b.Name))
-
+			span.SetAttributes(
+				attribute.String(semconv.LLMOutputMessageToolCallKey(msgIndex, toolCallIdx, semconv.ToolCallID), b.ID),
+				attribute.String(semconv.LLMOutputMessageToolCallKey(msgIndex, toolCallIdx, semconv.ToolCallFunctionName), b.Name),
+			)
 			if b.Input != nil {
 				if inputJSON, err := json.Marshal(b.Input); err == nil {
-					argsKey := semconv.OutputMessageToolCallAttr(msgIndex, toolCallIdx, semconv.ToolCallFunctionArgs)
-					span.SetAttributes(argsKey.String(string(inputJSON)))
+					span.SetAttributes(attribute.String(
+						semconv.LLMOutputMessageToolCallKey(msgIndex, toolCallIdx, semconv.ToolCallFunctionArgumentsJSON),
+						string(inputJSON),
+					))
 				}
 			}
 			toolCallIdx++
