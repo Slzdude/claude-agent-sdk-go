@@ -74,11 +74,23 @@ func (c *TracedClient) ReceiveResponse(ctx context.Context) <-chan claude.Messag
 
 	inputValue, inputMimeType := formatPromptValue(prompt)
 
+	// Set model name so Langfuse treats this as a "generation" span
+	modelName := "claude"
+	if c.client != nil {
+		if info := c.client.GetServerInfo(); info != nil {
+			if m, ok := info["model"].(string); ok && m != "" {
+				modelName = m
+			}
+		}
+	}
+
 	tracer := c.tracer
 	ctx, newSpan := tracer.Start(ctx, spanName,
 		trace.WithAttributes(
 			attribute.String(semconv.OpenInferenceSpanKind, semconv.SpanKindAgent),
 			attribute.String(semconv.LLMSystem, semconv.LLMSystemAnthropic),
+			attribute.String(semconv.LLMModelName, modelName),
+			attribute.String("gen_ai.request.model", modelName),
 			attribute.String(semconv.InputValue, inputValue),
 			attribute.String(semconv.InputMimeType, inputMimeType),
 		),
@@ -115,6 +127,8 @@ func (c *TracedClient) ReceiveMessages(ctx context.Context) <-chan claude.Messag
 		trace.WithAttributes(
 			attribute.String(semconv.OpenInferenceSpanKind, semconv.SpanKindAgent),
 			attribute.String(semconv.LLMSystem, semconv.LLMSystemAnthropic),
+			attribute.String(semconv.LLMModelName, "claude"),
+			attribute.String("gen_ai.request.model", "claude"),
 		),
 	)
 	span = wrapSpan(span, c.cfg)

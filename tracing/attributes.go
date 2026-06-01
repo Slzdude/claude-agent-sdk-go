@@ -85,6 +85,7 @@ func extractResultMessageAttributes(span trace.Span, msg *claude.ResultMessage) 
 		span.SetAttributes(
 			attribute.String(semconv.OutputValue, msg.Result),
 			attribute.String(semconv.OutputMimeType, semconv.MimeTypeText),
+			attribute.String("gen_ai.completion", msg.Result),
 		)
 	}
 

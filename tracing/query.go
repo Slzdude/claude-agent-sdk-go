@@ -33,10 +33,20 @@ func TracedQuery(ctx context.Context, prompt string, opts *claude.ClaudeAgentOpt
 
 	inputValue, inputMimeType := formatPromptValue(prompt)
 
+	// Determine model name: from opts.Model, or default to "claude"
+	// Langfuse requires a model attribute to treat the span as a "generation"
+	// (which enables Input/Output display). Set it at creation time.
+	modelName := "claude"
+	if opts != nil && opts.Model != "" {
+		modelName = opts.Model
+	}
+
 	ctx, span := tracer.Start(ctx, spanName,
 		trace.WithAttributes(
 			attribute.String(semconv.OpenInferenceSpanKind, semconv.SpanKindAgent),
 			attribute.String(semconv.LLMSystem, semconv.LLMSystemAnthropic),
+			attribute.String(semconv.LLMModelName, modelName),
+			attribute.String("gen_ai.request.model", modelName),
 			attribute.String(semconv.InputValue, inputValue),
 			attribute.String(semconv.InputMimeType, inputMimeType),
 		),
