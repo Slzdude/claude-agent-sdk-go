@@ -113,7 +113,7 @@ func wrapMessageChannel(
 			targetSpan := resolveTargetSpan(rootSpan, subagentTracker, msg)
 			extractMessageAttributes(targetSpan, msg, &outputMsgIndex)
 
-			updateToolSpansFromMessages(ctx, msg, toolTracker)
+			updateToolSpansFromMessages(ctx, msg, toolTracker, subagentTracker)
 
 			out <- msg
 		}
@@ -147,12 +147,22 @@ func getParentToolUseID(msg claude.Message) string {
 	return ""
 }
 
-func updateToolSpansFromMessages(ctx context.Context, msg claude.Message, tracker *ToolSpanTracker) {
+func updateToolSpansFromMessages(ctx context.Context, msg claude.Message, tracker *ToolSpanTracker, subagentTracker *SubagentSpanTracker) {
 	content := extractContentBlocks(msg)
+
+	// Resolve parent context: if message has parent_tool_use_id and a subagent
+	// span exists for it, use that as the parent context for TOOL spans.
+	parentCtx := ctx
+	if parentID := getParentToolUseID(msg); parentID != "" {
+		if subSpan := subagentTracker.GetByToolUseID(parentID); subSpan != nil {
+			parentCtx = trace.ContextWithSpan(ctx, subSpan)
+		}
+	}
+
 	for _, block := range content {
 		switch b := block.(type) {
 		case *claude.ToolUseBlock:
-			tracker.Start(ctx, b.ID, b.Name, b.Input, "")
+			tracker.Start(parentCtx, b.ID, b.Name, b.Input, "")
 		case *claude.ToolResultBlock:
 			if b.IsError != nil && *b.IsError {
 				tracker.EndWithError(b.ToolUseID, fmt.Errorf("tool result error"))
