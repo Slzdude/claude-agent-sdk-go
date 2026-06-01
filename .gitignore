@@ -36,6 +36,9 @@ bin/
 .DS_Store
 Thumbs.db
 
+# E2E tests (may contain hardcoded credentials)
+tracing/e2e/
+
 # Environment
 .env
 .env.local
