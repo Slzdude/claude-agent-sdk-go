@@ -65,6 +65,14 @@ func TracedQuery(ctx context.Context, prompt string, opts *claude.ClaudeAgentOpt
 	toolTracker.SetSubagentCallback(func(toolUseID, agentID, agentType, toolName, parentToolUseID string) {
 		subagentTracker.GetOrCreate(toolUseID, agentID, agentType, toolName)
 	})
+	// Wire up parent context resolver so hooks can parent TOOL spans
+	// under subagent AGENT spans.
+	toolTracker.SetParentContextResolver(func(parentToolUseID string) context.Context {
+		if subSpan := subagentTracker.GetByToolUseID(parentToolUseID); subSpan != nil {
+			return trace.ContextWithSpan(context.Background(), subSpan)
+		}
+		return nil
+	})
 
 	toolTracker.InjectHooks(&instrumentedOpts)
 

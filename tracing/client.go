@@ -104,6 +104,12 @@ func (c *TracedClient) ReceiveResponse(ctx context.Context) <-chan claude.Messag
 	newToolTracker.SetSubagentCallback(func(toolUseID, agentID, agentType, toolName, parentToolUseID string) {
 		newSubagentTracker.GetOrCreate(toolUseID, agentID, agentType, toolName)
 	})
+	newToolTracker.SetParentContextResolver(func(parentToolUseID string) context.Context {
+		if subSpan := newSubagentTracker.GetByToolUseID(parentToolUseID); subSpan != nil {
+			return trace.ContextWithSpan(context.Background(), subSpan)
+		}
+		return nil
+	})
 
 	c.mu.Lock()
 	c.currentSpan = newSpan
@@ -139,6 +145,12 @@ func (c *TracedClient) ReceiveMessages(ctx context.Context) <-chan claude.Messag
 
 	toolTracker.SetSubagentCallback(func(toolUseID, agentID, agentType, toolName, parentToolUseID string) {
 		subagentTracker.GetOrCreate(toolUseID, agentID, agentType, toolName)
+	})
+	toolTracker.SetParentContextResolver(func(parentToolUseID string) context.Context {
+		if subSpan := subagentTracker.GetByToolUseID(parentToolUseID); subSpan != nil {
+			return trace.ContextWithSpan(context.Background(), subSpan)
+		}
+		return nil
 	})
 
 	msgs := c.client.ReceiveMessages(ctx)

@@ -22,6 +22,9 @@ type ToolSpanTracker struct {
 	mu         sync.Mutex
 	spans      map[string]trace.Span
 	subagentCallback func(toolUseID, agentID, agentType, toolName, parentToolUseID string)
+	// parentContextResolver resolves the parent context for a tool use ID.
+	// Used to parent TOOL spans under subagent AGENT spans.
+	parentContextResolver func(parentToolUseID string) context.Context
 }
 
 // NewToolSpanTracker creates a new tracker.
@@ -37,6 +40,13 @@ func NewToolSpanTracker(tracer trace.Tracer, parentSpan trace.Span, cfg *TraceCo
 // SetSubagentCallback sets the callback for subagent detection.
 func (t *ToolSpanTracker) SetSubagentCallback(cb func(toolUseID, agentID, agentType, toolName, parentToolUseID string)) {
 	t.subagentCallback = cb
+}
+
+// SetParentContextResolver sets a callback that resolves the parent context
+// for a given parent_tool_use_id. Used to parent TOOL spans under subagent
+// AGENT spans when hooks fire within a subagent context.
+func (t *ToolSpanTracker) SetParentContextResolver(cb func(parentToolUseID string) context.Context) {
+	t.parentContextResolver = cb
 }
 
 // Start creates a TOOL span for a tool execution. Returns false if a span with
@@ -169,7 +179,16 @@ func (t *ToolSpanTracker) InjectHooks(opts *claude.ClaudeAgentOptions) {
 		agentType, _ := input["agent_type"].(string)
 		parentToolUseID, _ := input["parent_tool_use_id"].(string)
 
-		t.Start(ctx, toolUseID, toolName, toolInput, parentToolUseID)
+		// Resolve parent context: if parent_tool_use_id is set and we have
+		// a resolver, use the subagent span's context as parent.
+		hookCtx := ctx
+		if parentToolUseID != "" && t.parentContextResolver != nil {
+			if resolved := t.parentContextResolver(parentToolUseID); resolved != nil {
+				hookCtx = resolved
+			}
+		}
+
+		t.Start(hookCtx, toolUseID, toolName, toolInput, parentToolUseID)
 
 		if agentID != "" && t.subagentCallback != nil {
 			t.subagentCallback(toolUseID, agentID, agentType, toolName, parentToolUseID)
