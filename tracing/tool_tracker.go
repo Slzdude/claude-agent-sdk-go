@@ -22,9 +22,11 @@ type ToolSpanTracker struct {
 	mu         sync.Mutex
 	spans      map[string]trace.Span
 	subagentCallback func(toolUseID, agentID, agentType, toolName, parentToolUseID string)
-	// parentContextResolver resolves the parent context for a tool use ID.
-	// Used to parent TOOL spans under subagent AGENT spans.
+	// parentContextResolver resolves the parent context for a parent_tool_use_id.
 	parentContextResolver func(parentToolUseID string) context.Context
+	// agentIDContextResolver resolves the parent context for an agent_id.
+	// Used when the CLI provides agent_id but not parent_tool_use_id.
+	agentIDContextResolver func(agentID string) context.Context
 }
 
 // NewToolSpanTracker creates a new tracker.
@@ -47,6 +49,13 @@ func (t *ToolSpanTracker) SetSubagentCallback(cb func(toolUseID, agentID, agentT
 // AGENT spans when hooks fire within a subagent context.
 func (t *ToolSpanTracker) SetParentContextResolver(cb func(parentToolUseID string) context.Context) {
 	t.parentContextResolver = cb
+}
+
+// SetAgentIDContextResolver sets a callback that resolves the parent context
+// for a given agent_id. Used when the CLI provides agent_id but not
+// parent_tool_use_id in the hook input.
+func (t *ToolSpanTracker) SetAgentIDContextResolver(cb func(agentID string) context.Context) {
+	t.agentIDContextResolver = cb
 }
 
 // Start creates a TOOL span for a tool execution. Returns false if a span with
@@ -179,11 +188,14 @@ func (t *ToolSpanTracker) InjectHooks(opts *claude.ClaudeAgentOptions) {
 		agentType, _ := input["agent_type"].(string)
 		parentToolUseID, _ := input["parent_tool_use_id"].(string)
 
-		// Resolve parent context: if parent_tool_use_id is set and we have
-		// a resolver, use the subagent span's context as parent.
+		// Resolve parent context: try parent_tool_use_id first, then agent_id.
 		hookCtx := ctx
 		if parentToolUseID != "" && t.parentContextResolver != nil {
 			if resolved := t.parentContextResolver(parentToolUseID); resolved != nil {
+				hookCtx = resolved
+			}
+		} else if agentID != "" && t.agentIDContextResolver != nil {
+			if resolved := t.agentIDContextResolver(agentID); resolved != nil {
 				hookCtx = resolved
 			}
 		}

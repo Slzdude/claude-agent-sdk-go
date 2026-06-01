@@ -105,6 +105,12 @@ func (c *TracedClient) ReceiveResponse(ctx context.Context) <-chan claude.Messag
 		newSubagentTracker.GetOrCreate(toolUseID, agentID, agentType, toolName)
 	})
 	newToolTracker.SetParentContextResolver(func(parentToolUseID string) context.Context {
+	newToolTracker.SetAgentIDContextResolver(func(agentID string) context.Context {
+		if subSpan := newSubagentTracker.GetByAgentID(agentID); subSpan != nil {
+			return trace.ContextWithSpan(context.Background(), subSpan)
+		}
+		return nil
+	})
 		if subSpan := newSubagentTracker.GetByToolUseID(parentToolUseID); subSpan != nil {
 			return trace.ContextWithSpan(context.Background(), subSpan)
 		}
@@ -148,6 +154,12 @@ func (c *TracedClient) ReceiveMessages(ctx context.Context) <-chan claude.Messag
 	})
 	toolTracker.SetParentContextResolver(func(parentToolUseID string) context.Context {
 		if subSpan := subagentTracker.GetByToolUseID(parentToolUseID); subSpan != nil {
+			return trace.ContextWithSpan(context.Background(), subSpan)
+		}
+		return nil
+	})
+	toolTracker.SetAgentIDContextResolver(func(agentID string) context.Context {
+		if subSpan := subagentTracker.GetByAgentID(agentID); subSpan != nil {
 			return trace.ContextWithSpan(context.Background(), subSpan)
 		}
 		return nil

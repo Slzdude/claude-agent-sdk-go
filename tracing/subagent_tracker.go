@@ -74,6 +74,13 @@ func (s *SubagentSpanTracker) GetByToolUseID(toolUseID string) trace.Span {
 	return s.agents[agentID]
 }
 
+// GetByAgentID returns the subagent span for a given agent ID, or nil.
+func (s *SubagentSpanTracker) GetByAgentID(agentID string) trace.Span {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.agents[agentID]
+}
+
 // ProcessMessage routes messages to the correct subagent span.
 func (s *SubagentSpanTracker) ProcessMessage(msg claude.Message) {
 	switch m := msg.(type) {

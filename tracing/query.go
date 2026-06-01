@@ -73,6 +73,14 @@ func TracedQuery(ctx context.Context, prompt string, opts *claude.ClaudeAgentOpt
 		}
 		return nil
 	})
+	// Wire up agent_id context resolver for when CLI provides agent_id
+	// but not parent_tool_use_id in the hook input.
+	toolTracker.SetAgentIDContextResolver(func(agentID string) context.Context {
+		if subSpan := subagentTracker.GetByAgentID(agentID); subSpan != nil {
+			return trace.ContextWithSpan(context.Background(), subSpan)
+		}
+		return nil
+	})
 
 	toolTracker.InjectHooks(&instrumentedOpts)
 
