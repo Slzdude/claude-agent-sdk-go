@@ -66,10 +66,11 @@ func TracedQuery(ctx context.Context, prompt string, opts *claude.ClaudeAgentOpt
 		return nil, err
 	}
 
-	return wrapMessageChannel(span, msgs, toolTracker, subagentTracker, cfg), nil
+	return wrapMessageChannel(ctx, span, msgs, toolTracker, subagentTracker, cfg), nil
 }
 
 func wrapMessageChannel(
+	ctx context.Context,
 	rootSpan trace.Span,
 	msgs <-chan claude.Message,
 	toolTracker *ToolSpanTracker,
@@ -99,7 +100,7 @@ func wrapMessageChannel(
 
 			subagentTracker.ProcessMessage(msg)
 
-			updateToolSpansFromMessages(msg, toolTracker)
+			updateToolSpansFromMessages(ctx, msg, toolTracker)
 
 			out <- msg
 		}
@@ -133,12 +134,12 @@ func getParentToolUseID(msg claude.Message) string {
 	return ""
 }
 
-func updateToolSpansFromMessages(msg claude.Message, tracker *ToolSpanTracker) {
+func updateToolSpansFromMessages(ctx context.Context, msg claude.Message, tracker *ToolSpanTracker) {
 	content := extractContentBlocks(msg)
 	for _, block := range content {
 		switch b := block.(type) {
 		case *claude.ToolUseBlock:
-			tracker.Start(b.ID, b.Name, b.Input, "")
+			tracker.Start(ctx, b.ID, b.Name, b.Input, "")
 		case *claude.ToolResultBlock:
 			if b.IsError != nil && *b.IsError {
 				tracker.EndWithError(b.ToolUseID, fmt.Errorf("tool result error"))

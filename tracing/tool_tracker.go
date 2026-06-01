@@ -41,7 +41,8 @@ func (t *ToolSpanTracker) SetSubagentCallback(cb func(toolUseID, agentID, agentT
 
 // Start creates a TOOL span for a tool execution. Returns false if a span with
 // this toolUseID already exists (deduplication).
-func (t *ToolSpanTracker) Start(toolUseID, toolName string, input map[string]any, parentToolUseID string) bool {
+// hookCtx is the context from the hook callback, which carries the parent span chain.
+func (t *ToolSpanTracker) Start(hookCtx context.Context, toolUseID, toolName string, input map[string]any, parentToolUseID string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -49,8 +50,16 @@ func (t *ToolSpanTracker) Start(toolUseID, toolName string, input map[string]any
 		return false
 	}
 
-	ctx := trace.ContextWithSpan(context.Background(), t.parentSpan)
-	_, span := t.tracer.Start(ctx, toolName,
+	// Use the hook's context (which carries the AGENT span from the caller chain).
+	// If it doesn't have a span, fall back to the stored parentSpan.
+	parentCtx := hookCtx
+	if trace.SpanFromContext(hookCtx).SpanContext().IsValid() {
+		// Hook context already has a span — use it directly as parent.
+	} else {
+		parentCtx = trace.ContextWithSpan(context.Background(), t.parentSpan)
+	}
+
+	_, span := t.tracer.Start(parentCtx, toolName,
 		trace.WithAttributes(
 			attribute.String(semconv.OpenInferenceSpanKind, semconv.SpanKindTool),
 			attribute.String(semconv.ToolName, toolName),
@@ -160,7 +169,7 @@ func (t *ToolSpanTracker) InjectHooks(opts *claude.ClaudeAgentOptions) {
 		agentType, _ := input["agent_type"].(string)
 		parentToolUseID, _ := input["parent_tool_use_id"].(string)
 
-		t.Start(toolUseID, toolName, toolInput, parentToolUseID)
+		t.Start(ctx, toolUseID, toolName, toolInput, parentToolUseID)
 
 		if agentID != "" && t.subagentCallback != nil {
 			t.subagentCallback(toolUseID, agentID, agentType, toolName, parentToolUseID)

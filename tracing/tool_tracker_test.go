@@ -30,7 +30,7 @@ func TestToolSpanTracker_StartEnd(t *testing.T) {
 	_, rootSpan := tracer.Start(context.Background(), "root")
 
 	tracker := NewToolSpanTracker(tracer, rootSpan, nil)
-	tracker.Start("tool_1", "Bash", map[string]any{"command": "ls"}, "")
+	tracker.Start(context.Background(), "tool_1", "Bash", map[string]any{"command": "ls"}, "")
 	tracker.End("tool_1", map[string]any{"output": "file1.txt"})
 
 	rootSpan.End()
@@ -68,8 +68,8 @@ func TestToolSpanTracker_Deduplication(t *testing.T) {
 	_, rootSpan := tracer.Start(context.Background(), "root")
 
 	tracker := NewToolSpanTracker(tracer, rootSpan, nil)
-	ok1 := tracker.Start("tool_1", "Bash", nil, "")
-	ok2 := tracker.Start("tool_1", "Bash", nil, "")
+	ok1 := tracker.Start(context.Background(), "tool_1", "Bash", nil, "")
+	ok2 := tracker.Start(context.Background(), "tool_1", "Bash", nil, "")
 
 	if !ok1 {
 		t.Error("first Start should return true")
@@ -95,7 +95,7 @@ func TestToolSpanTracker_EndWithError(t *testing.T) {
 	_, rootSpan := tracer.Start(context.Background(), "root")
 
 	tracker := NewToolSpanTracker(tracer, rootSpan, nil)
-	tracker.Start("tool_1", "Bash", nil, "")
+	tracker.Start(context.Background(), "tool_1", "Bash", nil, "")
 	tracker.EndWithError("tool_1", errors.New("command failed"))
 
 	rootSpan.End()
@@ -119,8 +119,8 @@ func TestToolSpanTracker_EndAll(t *testing.T) {
 	_, rootSpan := tracer.Start(context.Background(), "root")
 
 	tracker := NewToolSpanTracker(tracer, rootSpan, nil)
-	tracker.Start("tool_1", "Bash", nil, "")
-	tracker.Start("tool_2", "Read", nil, "")
+	tracker.Start(context.Background(), "tool_1", "Bash", nil, "")
+	tracker.Start(context.Background(), "tool_2", "Read", nil, "")
 	tracker.EndAll()
 
 	rootSpan.End()
@@ -217,7 +217,7 @@ func TestToolSpanTracker_ConcurrentAccess(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			toolID := "tool_" + string(rune('A'+id))
-			tracker.Start(toolID, "Bash", nil, "")
+			tracker.Start(context.Background(), toolID, "Bash", nil, "")
 			tracker.End(toolID, nil)
 		}(i)
 	}
@@ -245,7 +245,7 @@ func TestToolSpanTracker_WithAttributeFilter(t *testing.T) {
 	}
 
 	tracker := NewToolSpanTracker(tracer, rootSpan, cfg)
-	tracker.Start("tool_1", "Bash", map[string]any{"secret": "password123"}, "")
+	tracker.Start(context.Background(), "tool_1", "Bash", map[string]any{"secret": "password123"}, "")
 	tracker.End("tool_1", nil)
 
 	rootSpan.End()

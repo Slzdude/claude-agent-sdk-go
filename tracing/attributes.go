@@ -226,9 +226,9 @@ func extractOutputMessages(span trace.Span, content []claude.ContentBlock, msgIn
 		switch b := block.(type) {
 		case *claude.TextBlock:
 			if b.Text != "" {
-				// Official LLMOutputMessageContentKey(i) returns "llm.output_messages.{i}.message.content"
-				// For indexed content blocks, append the index.
-				key := semconv.LLMOutputMessageContentKey(msgIndex) + "." + strconv.Itoa(contentIdx)
+				// Match Python's format: llm.output_messages.{N}.message.contents.{M}.message_content.text
+				// (Langfuse recognizes this format for rendering message content)
+				key := semconv.LLMOutputMessages + "." + strconv.Itoa(msgIndex) + ".message.contents." + strconv.Itoa(contentIdx) + ".message_content.text"
 				span.SetAttributes(attribute.String(key, b.Text))
 				contentIdx++
 			}

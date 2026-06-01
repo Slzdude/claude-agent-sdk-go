@@ -101,7 +101,7 @@ func (c *TracedClient) ReceiveResponse(ctx context.Context) <-chan claude.Messag
 
 	msgs := c.client.ReceiveResponse(ctx)
 
-	return wrapMessageChannel(newSpan, msgs, newToolTracker, newSubagentTracker, c.cfg)
+	return wrapMessageChannel(ctx, newSpan, msgs, newToolTracker, newSubagentTracker, c.cfg)
 }
 
 // ReceiveMessages wraps ClaudeSDKClient.ReceiveMessages.
@@ -129,7 +129,7 @@ func (c *TracedClient) ReceiveMessages(ctx context.Context) <-chan claude.Messag
 
 	msgs := c.client.ReceiveMessages(ctx)
 
-	return wrapMessageChannel(span, msgs, toolTracker, subagentTracker, c.cfg)
+	return wrapMessageChannel(ctx, span, msgs, toolTracker, subagentTracker, c.cfg)
 }
 
 // Close ends all pending spans and closes the underlying client.
