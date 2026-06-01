@@ -105,10 +105,13 @@ func wrapMessageChannel(
 
 		outputMsgIndex := 0
 		for msg := range msgs {
+			// ProcessMessage must run BEFORE resolveTargetSpan, because
+			// TaskStartedMessage creates the subagent span that subsequent
+			// messages need to route to.
+			subagentTracker.ProcessMessage(msg)
+
 			targetSpan := resolveTargetSpan(rootSpan, subagentTracker, msg)
 			extractMessageAttributes(targetSpan, msg, &outputMsgIndex)
-
-			subagentTracker.ProcessMessage(msg)
 
 			updateToolSpansFromMessages(ctx, msg, toolTracker)
 
