@@ -1209,10 +1209,10 @@ func TestControlCancelRequest_Handling(t *testing.T) {
 	q.inflightHandlers["req-1"] = cancel
 
 	// Simulate receiving a control_cancel_request.
-	cancelled := false
+	cancelled := make(chan struct{})
 	go func() {
 		<-ctx.Done()
-		cancelled = true
+		close(cancelled)
 	}()
 
 	// Process the cancel request (same logic as in Run()).
@@ -1226,8 +1226,10 @@ func TestControlCancelRequest_Handling(t *testing.T) {
 	}
 
 	// Wait for cancellation to propagate.
-	time.Sleep(50 * time.Millisecond)
-	if !cancelled {
+	select {
+	case <-cancelled:
+		// Good — context was cancelled.
+	case <-time.After(2 * time.Second):
 		t.Error("handler context was not cancelled")
 	}
 
