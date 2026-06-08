@@ -44,9 +44,9 @@ func (s *SubagentSpanTracker) GetOrCreate(toolUseID, agentID, agentType, toolNam
 		return span
 	}
 
-	parentCtx := trace.ContextWithSpan(context.TODO(), s.rootSpan)
+	parentCtx := trace.ContextWithSpan(context.Background(), s.rootSpan)
 	if toolSpan, ok := s.toolTracker.GetInFlightSpan(toolUseID); ok {
-		parentCtx = trace.ContextWithSpan(context.TODO(), toolSpan)
+		parentCtx = trace.ContextWithSpan(context.Background(), toolSpan)
 	}
 
 	spanName := fmt.Sprintf("ClaudeAgentSDK.%s", toolName)
@@ -118,9 +118,9 @@ func (s *SubagentSpanTracker) ensureSubagentSpan(toolUseID, taskID, description 
 		agentID = toolUseID
 	}
 
-	parentCtx := trace.ContextWithSpan(context.TODO(), s.rootSpan)
+	parentCtx := trace.ContextWithSpan(context.Background(), s.rootSpan)
 	if toolSpan, ok := s.toolTracker.GetInFlightSpan(toolUseID); ok {
-		parentCtx = trace.ContextWithSpan(context.TODO(), toolSpan)
+		parentCtx = trace.ContextWithSpan(context.Background(), toolSpan)
 	}
 
 	spanName := "ClaudeAgentSDK.Agent"

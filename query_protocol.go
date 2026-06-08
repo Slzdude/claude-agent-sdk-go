@@ -45,6 +45,10 @@ type queryProto struct {
 	inflightMu       sync.Mutex
 	inflightHandlers map[string]context.CancelFunc
 
+	// controlSem limits concurrent inbound control request handlers (hooks, MCP, permissions).
+	// Prevents resource exhaustion under high sub-agent fan-out.
+	controlSem chan struct{}
+
 	// excludeDynamicSections is sent in the initialize request when set.
 	excludeDynamicSections *bool
 
@@ -75,6 +79,7 @@ func newQueryProto(t *cliTransport, opts *ClaudeAgentOptions) *queryProto {
 		firstResultCh:    make(chan struct{}),
 		pending:          make(map[string]chan controlResult),
 		inflightHandlers: make(map[string]context.CancelFunc),
+		controlSem:       make(chan struct{}, 10),
 		rawOut:           make(chan map[string]any, 64),
 	}
 }
@@ -301,25 +306,83 @@ func (q *queryProto) SendControlRequest(ctx context.Context, payload map[string]
 func (q *queryProto) Run(ctx context.Context) <-chan map[string]any {
 	raws := q.transport.readMessages(ctx)
 	out := q.rawOut
+
+	// Control-request channel: buffered so the read loop never blocks when
+	// dispatching hook/MCP/permission callbacks, even if the consumer-side
+	// `out` channel is full (priority inversion prevention).
+	controlCh := make(chan map[string]any, 64)
+
+	// Goroutine 1: read loop — dispatches control requests to controlCh,
+	// mirrors to batcher, forwards everything else to out. Never blocks
+	// on consumer for control-request messages.
+	go func() {
+		defer close(controlCh)
+		for raw := range raws {
+			msgType := strVal(raw, "type")
+			switch msgType {
+			case "control_request", "control_cancel_request", "control_response":
+				// Control protocol messages always dispatched, never blocked by slow consumer.
+				select {
+				case controlCh <- raw:
+				case <-ctx.Done():
+					return
+				}
+			case "transcript_mirror":
+				if q.mirrorBatcher != nil {
+					filePath := strVal(raw, "filePath")
+					if entriesRaw, ok := raw["entries"].([]any); ok && filePath != "" {
+						entries := parseMirrorEntries(entriesRaw)
+						q.mirrorBatcher.Enqueue(filePath, entries)
+					}
+				}
+			case "result":
+				if q.mirrorBatcher != nil {
+					q.mirrorBatcher.Flush()
+				}
+				q.firstResultOnce.Do(func() { close(q.firstResultCh) })
+				select {
+				case out <- raw:
+				case <-ctx.Done():
+					return
+				}
+			default:
+				select {
+				case out <- raw:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+
+	// Goroutine 2: control protocol handler — processes control requests
+	// independently from the consumer-side channel.
 	go func() {
 		defer func() {
-			// Final flush of any remaining mirror entries before closing.
 			if q.mirrorBatcher != nil {
 				q.mirrorBatcher.Close()
 			}
 			close(out)
 		}()
-		for raw := range raws {
+		for raw := range controlCh {
 			msgType := strVal(raw, "type")
 			switch msgType {
 			case "control_request":
-				// Inbound control request from CLI → SDK.
 				reqID := strVal(raw, "request_id")
 				handlerCtx, cancel := context.WithCancel(ctx)
 				q.inflightMu.Lock()
 				q.inflightHandlers[reqID] = cancel
 				q.inflightMu.Unlock()
 				go func() {
+					// Acquire semaphore — limits concurrent hook/MCP/permission handlers
+					// to prevent resource exhaustion under high sub-agent fan-out.
+					select {
+					case q.controlSem <- struct{}{}:
+					case <-handlerCtx.Done():
+						return
+					}
+					defer func() { <-q.controlSem }()
+
 					q.handleInboundControlRequest(handlerCtx, raw)
 					q.inflightMu.Lock()
 					delete(q.inflightHandlers, reqID)
@@ -327,7 +390,6 @@ func (q *queryProto) Run(ctx context.Context) <-chan map[string]any {
 				}()
 
 			case "control_cancel_request":
-				// CLI is cancelling a pending inbound request.
 				cancelID := strVal(raw, "request_id")
 				if cancelID != "" {
 					q.inflightMu.Lock()
@@ -340,8 +402,6 @@ func (q *queryProto) Run(ctx context.Context) <-chan map[string]any {
 				}
 
 			case "control_response":
-				// Response to an SDK-initiated control request.
-				// Format: {"type":"control_response","response":{"subtype":"success","request_id":"...","response":{...}}}
 				respEnv, ok := raw["response"].(map[string]any)
 				if !ok {
 					continue
@@ -366,42 +426,10 @@ func (q *queryProto) Run(ctx context.Context) <-chan map[string]any {
 					}
 					ch <- controlResult{data: data}
 				}
-
-			case "transcript_mirror":
-				// Peel transcript_mirror frames off stdout and hand to the batcher.
-				// These are NOT yielded to consumers.
-				if q.mirrorBatcher != nil {
-					filePath := strVal(raw, "filePath")
-					if entriesRaw, ok := raw["entries"].([]any); ok && filePath != "" {
-						entries := parseMirrorEntries(entriesRaw)
-						q.mirrorBatcher.Enqueue(filePath, entries)
-					}
-				}
-				continue
-
-			case "result":
-				// Flush pending transcript mirror entries BEFORE yielding result
-				// so consumers observing the result can rely on the store being up to date.
-				if q.mirrorBatcher != nil {
-					q.mirrorBatcher.Flush()
-				}
-				// Signal stdin can be closed.
-				q.firstResultOnce.Do(func() { close(q.firstResultCh) })
-				select {
-				case out <- raw:
-				case <-ctx.Done():
-					return
-				}
-
-			default:
-				select {
-				case out <- raw:
-				case <-ctx.Done():
-					return
-				}
 			}
 		}
 	}()
+
 	return out
 }
 

@@ -481,11 +481,14 @@ func (t *cliTransport) drainStderr(r io.Reader) {
 			}()
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		log.Printf("[transport] stderr read error: %v", err)
+	}
 }
 
 // readMessages delivers raw JSON objects from stdout into a channel.
 func (t *cliTransport) readMessages(ctx context.Context) <-chan map[string]any {
-	ch := make(chan map[string]any, 64)
+	ch := make(chan map[string]any, 256)
 	go func() {
 		defer close(ch)
 		for t.stdout.Scan() {

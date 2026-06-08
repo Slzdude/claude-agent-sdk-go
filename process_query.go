@@ -134,12 +134,20 @@ func processQuery(
 	// We start a goroutine to relay them.
 	if promptCh != nil {
 		go func() {
-			for raw := range promptCh {
-				if err := q.SendRawMessage(ctx, raw); err != nil {
+			for {
+				select {
+				case raw, ok := <-promptCh:
+					if !ok {
+						_ = t.closeStdin()
+						return
+					}
+					if err := q.SendRawMessage(ctx, raw); err != nil {
+						return
+					}
+				case <-ctx.Done():
 					return
 				}
 			}
-			_ = t.closeStdin()
 		}()
 	} else {
 		// For single-message queries: if hooks or SDK MCP servers are active,
