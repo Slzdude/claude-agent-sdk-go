@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	claude "github.com/Slzdude/claude-agent-sdk-go"
 	semconv "github.com/Arize-ai/openinference/go/openinference-semantic-conventions"
+	claude "github.com/Slzdude/claude-agent-sdk-go"
 	"go.opentelemetry.io/otel/codes"
 )
 

@@ -85,7 +85,7 @@ func NewPostgresSessionStore(pool *pgxpool.Pool, table string) (*PostgresSession
 
 // CreateSchema creates the table and listing index if absent. Idempotent.
 // Call once at startup (or run the equivalent migration out-of-band).
-// The partial index on subpath = '' keeps ListSessions cheap without
+// The partial index on subpath = ” keeps ListSessions cheap without
 // indexing every subagent row.
 func (s *PostgresSessionStore) CreateSchema(ctx context.Context) error {
 	ddl := fmt.Sprintf(`

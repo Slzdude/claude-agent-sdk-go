@@ -4,8 +4,8 @@ import (
 	"context"
 	"sync"
 
-	claude "github.com/Slzdude/claude-agent-sdk-go"
 	semconv "github.com/Arize-ai/openinference/go/openinference-semantic-conventions"
+	claude "github.com/Slzdude/claude-agent-sdk-go"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -14,11 +14,11 @@ import (
 // TracedClient wraps ClaudeSDKClient with per-turn AGENT spans and
 // automatic tool/subagent span tracking.
 type TracedClient struct {
-	client     *claude.ClaudeSDKClient
-	cfg        *TraceConfig
-	tracer     trace.Tracer
-	lastPrompt string
-	mu         sync.Mutex
+	client                     *claude.ClaudeSDKClient
+	cfg                        *TraceConfig
+	tracer                     trace.Tracer
+	lastPrompt                 string
+	mu                         sync.Mutex
 	currentToolSpanTracker     *ToolSpanTracker
 	currentSubagentSpanTracker *SubagentSpanTracker
 	currentSpan                trace.Span
@@ -105,12 +105,12 @@ func (c *TracedClient) ReceiveResponse(ctx context.Context) <-chan claude.Messag
 		newSubagentTracker.GetOrCreate(toolUseID, agentID, agentType, toolName)
 	})
 	newToolTracker.SetParentContextResolver(func(parentToolUseID string) context.Context {
-	newToolTracker.SetAgentIDContextResolver(func(agentID string) context.Context {
-		if subSpan := newSubagentTracker.GetByAgentID(agentID); subSpan != nil {
-			return trace.ContextWithSpan(context.Background(), subSpan)
-		}
-		return nil
-	})
+		newToolTracker.SetAgentIDContextResolver(func(agentID string) context.Context {
+			if subSpan := newSubagentTracker.GetByAgentID(agentID); subSpan != nil {
+				return trace.ContextWithSpan(context.Background(), subSpan)
+			}
+			return nil
+		})
 		if subSpan := newSubagentTracker.GetByToolUseID(parentToolUseID); subSpan != nil {
 			return trace.ContextWithSpan(context.Background(), subSpan)
 		}

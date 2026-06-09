@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"sync"
 
-	claude "github.com/Slzdude/claude-agent-sdk-go"
 	semconv "github.com/Arize-ai/openinference/go/openinference-semantic-conventions"
+	claude "github.com/Slzdude/claude-agent-sdk-go"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -16,11 +16,11 @@ import (
 
 // ToolSpanTracker manages TOOL spans for tool executions.
 type ToolSpanTracker struct {
-	tracer     trace.Tracer
-	parentSpan trace.Span
-	cfg        *TraceConfig
-	mu         sync.Mutex
-	spans      map[string]trace.Span
+	tracer           trace.Tracer
+	parentSpan       trace.Span
+	cfg              *TraceConfig
+	mu               sync.Mutex
+	spans            map[string]trace.Span
 	subagentCallback func(toolUseID, agentID, agentType, toolName, parentToolUseID string)
 	// parentContextResolver resolves the parent context for a parent_tool_use_id.
 	parentContextResolver func(parentToolUseID string) context.Context

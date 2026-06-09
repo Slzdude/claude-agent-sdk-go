@@ -132,7 +132,7 @@ func TestIsSafeSubpath(t *testing.T) {
 
 func TestApplyMaterializedOptions(t *testing.T) {
 	opts := ClaudeAgentOptions{
-		Resume:              "old-resume-id",
+		Resume:               "old-resume-id",
 		ContinueConversation: true,
 		Env: map[string]string{
 			"FOO": "bar",
@@ -206,9 +206,9 @@ func TestMaterializeResumeSession_WithStore(t *testing.T) {
 	}
 
 	opts := &ClaudeAgentOptions{
-		SessionStore: store,
-		Resume:       sessionID,
-		CWD:          tmpCWD,
+		SessionStore:  store,
+		Resume:        sessionID,
+		CWD:           tmpCWD,
 		LoadTimeoutMs: 5000,
 	}
 

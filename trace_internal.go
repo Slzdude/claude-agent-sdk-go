@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 
 	"github.com/Arize-ai/openinference/go/openinference-instrumentation"
 	semconv "github.com/Arize-ai/openinference/go/openinference-semantic-conventions"
@@ -36,6 +37,10 @@ type sessionTracer struct {
 // newSessionTracer creates a sessionTracer from a TracerProvider.
 func newSessionTracer(tp trace.TracerProvider) *sessionTracer {
 	tracer := tp.Tracer("claude-agent-sdk-go")
+	if tracer == nil {
+		slog.Warn("TracerProvider.Tracer returned nil, tracing disabled")
+		return nil
+	}
 	return &sessionTracer{
 		tracer:          tracer,
 		toolTracker:     newToolSpanTracker(tracer),
@@ -89,7 +94,14 @@ func (st *sessionTracer) startQuerySpan(ctx context.Context, spanName, prompt, m
 
 // processTracedMessage extracts attributes and manages tool/subagent spans
 // for a single message. Called from the message consumption goroutine.
+// Panics are recovered to avoid crashing the consumer goroutine.
 func (st *sessionTracer) processTracedMessage(ctx context.Context, rootSpan trace.Span, msg Message, outputMsgIndex *int) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Warn("panic in traced message processing (non-fatal)", "recover", r, "msg_type", fmt.Sprintf("%T", msg), "stack", string(debug.Stack()))
+		}
+	}()
+
 	// ProcessMessage must run BEFORE resolveTargetSpan
 	st.subagentTracker.processMessage(msg)
 
@@ -199,13 +211,13 @@ func extractContentBlocksInternal(msg Message) []ContentBlock {
 // --- tool span tracker (internal, mirrors tracing.ToolSpanTracker) ---
 
 type toolSpanTracker struct {
-	tracer                trace.Tracer
-	parentSpan            trace.Span
-	spans                 map[string]trace.Span
-	subagentCallback      func(toolUseID, agentID, agentType, toolName, parentToolUseID string)
-	parentContextResolver func(parentToolUseID string) context.Context
+	tracer                 trace.Tracer
+	parentSpan             trace.Span
+	spans                  map[string]trace.Span
+	subagentCallback       func(toolUseID, agentID, agentType, toolName, parentToolUseID string)
+	parentContextResolver  func(parentToolUseID string) context.Context
 	agentIDContextResolver func(agentID string) context.Context
-	hooksInjected         bool
+	hooksInjected          bool
 }
 
 func newToolSpanTracker(tracer trace.Tracer) *toolSpanTracker {
@@ -229,14 +241,18 @@ func (t *toolSpanTracker) setAgentIDContextResolver(cb func(agentID string) cont
 }
 
 func (t *toolSpanTracker) start(hookCtx context.Context, toolUseID, toolName string, input map[string]any, parentToolUseID string) bool {
+	if t == nil || t.tracer == nil {
+		return false
+	}
+
 	if _, exists := t.spans[toolUseID]; exists {
 		return false
 	}
 
 	parentCtx := hookCtx
 	if trace.SpanFromContext(hookCtx).SpanContext().IsValid() {
-		// hook context has a span
-	} else {
+		// hook context has a span — use as-is
+	} else if t.parentSpan != nil {
 		parentCtx = trace.ContextWithSpan(context.Background(), t.parentSpan)
 	}
 
@@ -393,7 +409,10 @@ func (s *subagentSpanTracker) getOrCreate(toolUseID, agentID, agentType, toolNam
 		return span
 	}
 
-	parentCtx := trace.ContextWithSpan(context.Background(), s.rootSpan)
+	parentCtx := context.Background()
+	if s.rootSpan != nil {
+		parentCtx = trace.ContextWithSpan(context.Background(), s.rootSpan)
+	}
 	if s.toolTracker != nil {
 		if toolSpan, ok := s.toolTracker.spans[toolUseID]; ok {
 			parentCtx = trace.ContextWithSpan(context.Background(), toolSpan)
@@ -476,7 +495,10 @@ func (s *subagentSpanTracker) ensureSubagentSpan(toolUseID, taskID, description 
 		agentID = toolUseID
 	}
 
-	parentCtx := trace.ContextWithSpan(context.Background(), s.rootSpan)
+	parentCtx := context.Background()
+	if s.rootSpan != nil {
+		parentCtx = trace.ContextWithSpan(context.Background(), s.rootSpan)
+	}
 	if s.toolTracker != nil {
 		if toolSpan, ok := s.toolTracker.spans[toolUseID]; ok {
 			parentCtx = trace.ContextWithSpan(context.Background(), toolSpan)
@@ -555,6 +577,9 @@ func extractSystemMessageAttrs(span trace.Span, msg *SystemMessage) {
 }
 
 func extractAssistantMessageAttrs(span trace.Span, msg *AssistantMessage, outputMsgIndex *int) {
+	if msg == nil {
+		return
+	}
 	if model := extractModelFromAssistantInternal(msg); model != "" {
 		span.SetAttributes(attribute.String(semconv.LLMModelName, model))
 	}
@@ -615,6 +640,9 @@ func extractModelFromMapInternal(data map[string]any) string {
 }
 
 func extractModelFromAssistantInternal(msg *AssistantMessage) string {
+	if msg == nil {
+		return ""
+	}
 	if msg.Model != "" {
 		return msg.Model
 	}

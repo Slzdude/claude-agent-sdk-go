@@ -64,12 +64,12 @@ var partMtimeRe = regexp.MustCompile(`/part-(\d{13})-[0-9a-f]{6}\.jsonl$`)
 
 // S3SessionStore implements claude.SessionStore backed by S3.
 type S3SessionStore struct {
-	client   *s3.Client
-	bucket   string
-	prefix   string
-	mu       sync.Mutex
-	lastMs   int64
-	ctx      context.Context
+	client *s3.Client
+	bucket string
+	prefix string
+	mu     sync.Mutex
+	lastMs int64
+	ctx    context.Context
 }
 
 // NewS3SessionStore creates a new S3-backed SessionStore.

@@ -48,8 +48,8 @@ func TestFoldSessionSummary_FirstPromptFiltering(t *testing.T) {
 		{
 			Type: "user",
 			Extra: map[string]any{
-				"isMeta":   true,
-				"message":  map[string]any{"content": "meta message"},
+				"isMeta":  true,
+				"message": map[string]any{"content": "meta message"},
 			},
 		},
 		// Slash command - should be stashed as fallback.

@@ -7,8 +7,8 @@ import (
 
 	semconv "github.com/Arize-ai/openinference/go/openinference-semantic-conventions"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 func TestQuery_WithTracerProvider(t *testing.T) {

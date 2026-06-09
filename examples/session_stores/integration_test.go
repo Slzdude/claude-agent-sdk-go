@@ -502,4 +502,3 @@ func newS3Client(t *testing.T, endpoint string) *s3.Client {
 		o.UsePathStyle = true
 	})
 }
-

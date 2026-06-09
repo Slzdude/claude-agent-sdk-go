@@ -68,9 +68,9 @@ func mockTransportWithConcurrentHooks(t *testing.T, hookCount int) *cliTransport
 				"type":       "control_request",
 				"request_id": hookReqIDs[i],
 				"request": map[string]any{
-					"subtype":    "hook_callback",
+					"subtype":     "hook_callback",
 					"callback_id": "hook_0",
-					"input":      map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": "echo " + itoa(i)}},
+					"input":       map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": "echo " + itoa(i)}},
 					"tool_use_id": "tu_" + itoa(i),
 				},
 			})

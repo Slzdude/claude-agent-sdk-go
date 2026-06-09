@@ -50,7 +50,7 @@ type AgentDefinition struct {
 	Description string `json:"description"`
 	Prompt      string `json:"prompt"`
 	// Deprecated: passing "Skill" here is deprecated; use Skills instead.
-	Tools []string `json:"tools,omitempty"`
+	Tools           []string `json:"tools,omitempty"`
 	DisallowedTools []string `json:"disallowedTools,omitempty"`
 	Model           string   `json:"model,omitempty"` // "sonnet", "opus", "haiku", "inherit", or full model ID
 	Skills          []string `json:"skills,omitempty"`
@@ -379,25 +379,25 @@ const (
 
 // ResultMessage is the final message from a query.
 type ResultMessage struct {
-	Subtype           string         `json:"subtype"`
-	DurationMs        int            `json:"duration_ms"`
-	DurationAPIMs     int            `json:"duration_api_ms"`
-	IsError           bool           `json:"is_error"`
-	NumTurns          int            `json:"num_turns"`
-	SessionID         string         `json:"session_id"`
-	StopReason        string         `json:"stop_reason,omitempty"`
-	TotalCostUSD      *float64       `json:"total_cost_usd,omitempty"`
-	Usage             map[string]any `json:"usage,omitempty"`
-	Result            string         `json:"result,omitempty"`
-	StructuredOutput  any            `json:"structured_output,omitempty"`
-	ModelUsage        map[string]any `json:"model_usage,omitempty"`
-	PermissionDenials []any          `json:"permission_denials,omitempty"`
+	Subtype           string           `json:"subtype"`
+	DurationMs        int              `json:"duration_ms"`
+	DurationAPIMs     int              `json:"duration_api_ms"`
+	IsError           bool             `json:"is_error"`
+	NumTurns          int              `json:"num_turns"`
+	SessionID         string           `json:"session_id"`
+	StopReason        string           `json:"stop_reason,omitempty"`
+	TotalCostUSD      *float64         `json:"total_cost_usd,omitempty"`
+	Usage             map[string]any   `json:"usage,omitempty"`
+	Result            string           `json:"result,omitempty"`
+	StructuredOutput  any              `json:"structured_output,omitempty"`
+	ModelUsage        map[string]any   `json:"model_usage,omitempty"`
+	PermissionDenials []any            `json:"permission_denials,omitempty"`
 	DeferredToolUse   *DeferredToolUse `json:"deferred_tool_use,omitempty"`
-	Errors            []string       `json:"errors,omitempty"`
+	Errors            []string         `json:"errors,omitempty"`
 	// APIErrorStatus is the HTTP status code (e.g. 429, 500, 529) of the
 	// failing API call when IsError is true and Subtype is "success".
-	APIErrorStatus    *int           `json:"api_error_status,omitempty"`
-	UUID              string         `json:"uuid,omitempty"`
+	APIErrorStatus *int   `json:"api_error_status,omitempty"`
+	UUID           string `json:"uuid,omitempty"`
 }
 
 func (m *ResultMessage) messageType() string { return "result" }

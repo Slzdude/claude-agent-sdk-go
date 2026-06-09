@@ -80,10 +80,10 @@ func TestForkSessionViaStore_ClearsStaleFields(t *testing.T) {
 	key := SessionKey{ProjectKey: "proj", SessionID: "550e8400-e29b-41d4-a716-446655440003"}
 	entries := []SessionStoreEntry{
 		{Type: "user", UUID: "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11", Extra: map[string]any{
-			"message":                "hello",
-			"teamName":               "old-team",
-			"agentName":              "old-agent",
-			"slug":                   "old-slug",
+			"message":                 "hello",
+			"teamName":                "old-team",
+			"agentName":               "old-agent",
+			"slug":                    "old-slug",
 			"sourceToolAssistantUUID": "old-uuid",
 		}},
 	}

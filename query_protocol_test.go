@@ -1196,12 +1196,12 @@ func TestHandleCanUseTool_WithToolUseIDAndAgentID(t *testing.T) {
 // cancels inflight request handlers via their CancelFunc.
 func TestControlCancelRequest_Handling(t *testing.T) {
 	q := &queryProto{
-		opts:              &ClaudeAgentOptions{},
-		hookCallbacks:     make(map[string]HookCallback),
-		hookTimeouts:      make(map[string]float64),
-		firstResultCh:     make(chan struct{}),
-		pending:           make(map[string]chan controlResult),
-		inflightHandlers:  make(map[string]context.CancelFunc),
+		opts:             &ClaudeAgentOptions{},
+		hookCallbacks:    make(map[string]HookCallback),
+		hookTimeouts:     make(map[string]float64),
+		firstResultCh:    make(chan struct{}),
+		pending:          make(map[string]chan controlResult),
+		inflightHandlers: make(map[string]context.CancelFunc),
 	}
 
 	// Register a cancel function for a fake inflight request.
@@ -1246,8 +1246,8 @@ func TestControlCancelRequest_Handling(t *testing.T) {
 // request ID is a no-op (no panic).
 func TestControlCancelRequest_UnknownID(t *testing.T) {
 	q := &queryProto{
-		opts:              &ClaudeAgentOptions{},
-		inflightHandlers:  make(map[string]context.CancelFunc),
+		opts:             &ClaudeAgentOptions{},
+		inflightHandlers: make(map[string]context.CancelFunc),
 	}
 
 	// Should not panic.

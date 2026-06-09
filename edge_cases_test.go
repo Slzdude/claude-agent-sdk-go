@@ -905,10 +905,10 @@ func TestMockProcessQuery_MalformedMessageSkipped(t *testing.T) {
 	})
 
 	tr := mockTransportWithInit(t,
-		`{"no_type_field": true}`,                     // malformed — no "type"
-		string(validAssistant),                         // valid
+		`{"no_type_field": true}`,                       // malformed — no "type"
+		string(validAssistant),                          // valid
 		`{"type": "assistant", "message": "not_a_map"}`, // malformed message
-		string(validResult),                            // valid
+		string(validResult),                             // valid
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

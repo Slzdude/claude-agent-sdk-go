@@ -70,8 +70,8 @@ func TestDontAskPermissionMode(t *testing.T) {
 	defer cancel()
 
 	msgs, err := claude.Query(ctx, "Say hello in one word", &claude.ClaudeAgentOptions{
-		MaxTurns:        1,
-		PermissionMode:  claude.PermissionModeDontAsk,
+		MaxTurns:       1,
+		PermissionMode: claude.PermissionModeDontAsk,
 	})
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
@@ -88,8 +88,8 @@ func TestAutoPermissionMode(t *testing.T) {
 	defer cancel()
 
 	msgs, err := claude.Query(ctx, "Say hello in one word", &claude.ClaudeAgentOptions{
-		MaxTurns:        1,
-		PermissionMode:  claude.PermissionModeAuto,
+		MaxTurns:       1,
+		PermissionMode: claude.PermissionModeAuto,
 	})
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
