@@ -37,6 +37,7 @@ type sessionTracer struct {
 // newSessionTracer creates a sessionTracer from a TracerProvider.
 func newSessionTracer(tp trace.TracerProvider) *sessionTracer {
 	tracer := tp.Tracer("claude-agent-sdk-go")
+	slog.Debug("[trace] newSessionTracer", "provider_type", fmt.Sprintf("%T", tp), "tracer_nil", tracer == nil)
 	if tracer == nil {
 		slog.Warn("TracerProvider.Tracer returned nil, tracing disabled")
 		return nil
@@ -221,7 +222,7 @@ type toolSpanTracker struct {
 }
 
 func newToolSpanTracker(tracer trace.Tracer) *toolSpanTracker {
-	return &toolSpanTracker{spans: make(map[string]trace.Span)}
+	return &toolSpanTracker{spans: make(map[string]trace.Span), tracer: tracer}
 }
 
 func (t *toolSpanTracker) setParentSpan(span trace.Span) {
@@ -334,6 +335,11 @@ func (t *toolSpanTracker) injectHooks(opts *ClaudeAgentOptions) {
 		agentID, _ := input["agent_id"].(string)
 		agentType, _ := input["agent_type"].(string)
 		parentToolUseID, _ := input["parent_tool_use_id"].(string)
+
+		slog.Debug("[trace] PreToolUse hook",
+			"tool", toolName, "toolUseID", toolUseID,
+			"agentID", agentID, "parentToolUseID", parentToolUseID,
+			"parentSpan_nil", t.parentSpan == nil, "tracer_nil", t.tracer == nil)
 
 		hookCtx := ctx
 		if parentToolUseID != "" && t.parentContextResolver != nil {
