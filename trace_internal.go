@@ -42,11 +42,16 @@ func newSessionTracer(tp trace.TracerProvider) *sessionTracer {
 		slog.Warn("TracerProvider.Tracer returned nil, tracing disabled")
 		return nil
 	}
-	return &sessionTracer{
+	st := &sessionTracer{
 		tracer:          tracer,
 		toolTracker:     newToolSpanTracker(tracer),
 		subagentTracker: newSubagentSpanTracker(tracer),
 	}
+	// Invariant: all sub-trackers must share the same tracer instance.
+	if st.toolTracker.tracer != tracer || st.subagentTracker.tracer != tracer {
+		panic("sessionTracer: sub-trackers have mismatched tracer (programming error)")
+	}
+	return st
 }
 
 // startQuerySpan creates the root AGENT span for a Query/ReceiveResponse.
@@ -168,18 +173,14 @@ func applyContextAttributesInternal(ctx context.Context, span trace.Span) {
 	instrumentation.ApplyContextAttributes(ctx, span)
 }
 
-// Context key types for tracing attributes.
-// These mirror the openinference-instrumentation package's keys but are
-// local to avoid import cycle. Users use the tracing package's With*
-// functions which set the same key types via the instrumentation library.
-type ctxKey struct{ name string }
-
-var (
-	sessionKey  = ctxKey{"session"}
-	userKey     = ctxKey{"user"}
-	metadataKey = ctxKey{"metadata"}
-	tagsKey     = ctxKey{"tags"}
-)
+// Compile-time assertion: processQuery depends on these sessionTracer methods.
+// If any are renamed or removed, this line produces a compile error.
+var _ interface {
+	startQuerySpan(ctx context.Context, spanName, prompt, model string) (context.Context, trace.Span)
+	processTracedMessage(ctx context.Context, rootSpan trace.Span, msg Message, outputMsgIndex *int)
+	endAll()
+	injectHooks(opts *ClaudeAgentOptions)
+} = (*sessionTracer)(nil)
 
 func getParentToolUseIDInternal(msg Message) string {
 	switch m := msg.(type) {
