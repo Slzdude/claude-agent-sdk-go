@@ -162,7 +162,9 @@ func (t *cliTransport) buildCommand() []string {
 
 	switch sp := opts.SystemPrompt.(type) {
 	case nil:
-		cmd = append(cmd, "--system-prompt", "")
+		// Don't pass --system-prompt when unset — let the CLI use its default
+		// system prompt which includes skill listings, memory, and other context.
+		// Passing --system-prompt "" overrides the default and strips skills.
 	case string:
 		cmd = append(cmd, "--system-prompt", sp)
 	case *SystemPromptPreset:
