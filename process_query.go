@@ -85,6 +85,14 @@ func processQuery(
 		}
 	}
 
+	// Initialize tracing BEFORE creating queryProto so hooks are registered
+	// before Initialize() sends them to the CLI.
+	var st *sessionTracer
+	if configuredOpts.TracerProvider != nil {
+		st = newSessionTracer(configuredOpts.TracerProvider)
+		st.injectHooks(&configuredOpts)
+	}
+
 	q := newQueryProto(t, &configuredOpts)
 	q.SetSDKMCPServers(sdkServers)
 	q.SetAgents(agentsMap)
@@ -165,13 +173,6 @@ func processQuery(
 		} else if prompt != "" {
 			_ = t.closeStdin()
 		}
-	}
-
-	// Initialize tracing if TracerProvider is set.
-	var st *sessionTracer
-	if configuredOpts.TracerProvider != nil {
-		st = newSessionTracer(configuredOpts.TracerProvider)
-		st.injectHooks(&configuredOpts)
 	}
 
 	if st != nil {
