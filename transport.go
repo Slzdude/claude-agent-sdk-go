@@ -90,6 +90,11 @@ type cliTransport struct {
 	err     error
 	closed  bool
 	stdinMu sync.Mutex
+	// writeFailed is set to true on the first write error (broken pipe, etc.).
+	// Subsequent writes fail fast without touching the pipe. Mirrors Python's
+	// _ready = False / _exit_error pattern.
+	writeFailed  bool
+	writeFailErr error
 }
 
 func newCLITransport(opts *ClaudeAgentOptions) (*cliTransport, error) {
@@ -530,11 +535,28 @@ func (t *cliTransport) readMessages(ctx context.Context) <-chan map[string]any {
 func (t *cliTransport) write(ctx context.Context, line string) error {
 	t.stdinMu.Lock()
 	defer t.stdinMu.Unlock()
-	if t.closed {
-		return fmt.Errorf("transport is closed")
+
+	// Pre-flight checks (mirrors Python's write() guards).
+	if t.writeFailed {
+		return &CLIConnectionError{
+			Message: fmt.Sprintf("cannot write to process that exited with error: %v", t.writeFailErr),
+		}
 	}
+	if t.closed {
+		return &CLIConnectionError{Message: "transport is closed"}
+	}
+
 	_, err := fmt.Fprintln(t.stdin, line)
-	return err
+	if err != nil {
+		// Mark transport as permanently poisoned — no more writes will succeed.
+		// Mirrors Python's _ready = False / _exit_error pattern.
+		t.writeFailed = true
+		t.writeFailErr = err
+		return &CLIConnectionError{
+			Message: fmt.Sprintf("failed to write to process stdin: %v", err),
+		}
+	}
+	return nil
 }
 
 func (t *cliTransport) closeStdin() error {
