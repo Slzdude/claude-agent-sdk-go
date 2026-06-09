@@ -1,36 +1,37 @@
 # tracing — OpenTelemetry instrumentation for Claude Agent SDK Go
 
-Zero-intrusion, decorator-pattern tracing layer for `claude-agent-sdk-go`. Creates OpenTelemetry spans with OpenInference semantic conventions, compatible with Langfuse and any OTLP backend.
+Zero-intrusion, decorator-pattern tracing layer for `claude-agent-sdk-go`.
+Backend-agnostic — accepts any `trace.TracerProvider`. Uses OpenInference
+semantic conventions for compatibility with Langfuse, Arize, Phoenix, and
+any OTLP-compatible backend.
 
 ## Quick Start
 
-### Langfuse
-
 ```go
 import (
+    "github.com/Slzdude/claude-agent-sdk-go"
     "github.com/Slzdude/claude-agent-sdk-go/tracing"
-    "github.com/Slzdude/claude-agent-sdk-go/tracing/langfuse"
 )
 
-// Setup
-tp, _ := langfuse.SetupLangfuse(ctx, langfuse.LangfuseConfig{})
+// 1. Set up your TracerProvider (Langfuse, Jaeger, etc.)
+//    See examples/langfuse_tracing/ for a complete Langfuse setup.
+tp := setupYourTracerProvider()
 defer tp.Shutdown(ctx)
 
-// Use TracedQuery instead of claude.Query
-msgs, _ := tracing.TracedQuery(ctx, "Hello", nil, tracing.WithTracerProvider(tp))
+// 2. Pass TracerProvider to the SDK — that's it.
+msgs, _ := tracing.TracedQuery(ctx, "Hello", &claude.ClaudeAgentOptions{
+    TracerProvider: tp,
+})
 for msg := range msgs { ... }
 ```
 
-### Custom OTel backend
+Or use the built-in `TracerProvider` option on `ClaudeAgentOptions`:
 
 ```go
-import "go.opentelemetry.io/otel"
-
-tp := setupYourTracerProvider()
-otel.SetTracerProvider(tp)
-
-msgs, _ := tracing.TracedQuery(ctx, "Hello", nil)
-for msg := range msgs { ... }
+opts := &claude.ClaudeAgentOptions{
+    TracerProvider: tp,  // one-line tracing enable
+}
+msgs, _ := claude.Query(ctx, "Hello", opts)
 ```
 
 ## Span Hierarchy
@@ -43,6 +44,17 @@ ClaudeAgentSDK.Query (AGENT)
     └── ClaudeAgentSDK.Task (AGENT)
         ├── Bash (TOOL)
         └── Read (TOOL)
+```
+
+## Context Attributes
+
+Inject metadata into every span via context:
+
+```go
+ctx = tracing.WithSession(ctx, sessionID)
+ctx = tracing.WithUser(ctx, userID)
+ctx = tracing.WithMetadata(ctx, `{"env":"production"}`)
+ctx = tracing.WithTags(ctx, "alert", "critical")
 ```
 
 ## Attributes
@@ -60,12 +72,11 @@ ClaudeAgentSDK.Query (AGENT)
 | `tool.name` | ToolUseBlock.Name |
 | `tool.id` | ToolUseBlock.ID |
 | `agent.name` | Subagent agent_id |
+| `metadata` | JSON from WithMetadata() |
+| `tag.tags` | String slice from WithTags() |
+| `user.id` | From WithUser() |
 
-## Environment Variables
+## Examples
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `LANGFUSE_PUBLIC_KEY` | Langfuse public key | — |
-| `LANGFUSE_SECRET_KEY` | Langfuse secret key | — |
-| `LANGFUSE_HOST` | Langfuse instance URL | `https://cloud.langfuse.com` |
-| `OTEL_SERVICE_NAME` | Service name for traces | `claude-agent-app` |
+- `examples/langfuse_tracing/` — Langfuse OTLP setup
+- `examples/otel_collector/` — Custom OTel collector (Jaeger, Tempo, etc.)

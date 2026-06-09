@@ -3,7 +3,6 @@ package tracing
 import (
 	"github.com/Arize-ai/openinference/go/openinference-instrumentation"
 	"go.opentelemetry.io/otel/attribute"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -42,8 +41,9 @@ type AttributeFilter func(kv attribute.KeyValue) bool
 
 // TraceConfig controls instrumentation behavior.
 type TraceConfig struct {
-	// TracerProvider to use. If nil, uses the global provider.
-	TracerProvider *sdktrace.TracerProvider
+	// TracerProvider to use. Accepts any trace.TracerProvider implementation.
+	// If nil, uses the NoopTracerProvider.
+	TracerProvider trace.TracerProvider
 	// Tracer to use. If nil, creates one from TracerProvider.
 	Tracer trace.Tracer
 	// SpanNamer overrides the default span name for Query.
@@ -58,7 +58,8 @@ type TraceConfig struct {
 type TraceOption func(*TraceConfig)
 
 // WithTracerProvider sets the TracerProvider.
-func WithTracerProvider(tp *sdktrace.TracerProvider) TraceOption {
+// Accepts any trace.TracerProvider implementation — backend-agnostic.
+func WithTracerProvider(tp trace.TracerProvider) TraceOption {
 	return func(c *TraceConfig) {
 		c.TracerProvider = tp
 	}
@@ -93,12 +94,10 @@ func (c *TraceConfig) resolveTracer() trace.Tracer {
 	if c.TracerProvider != nil {
 		return c.TracerProvider.Tracer(name)
 	}
-	// Use a no-op tracer when no provider is configured.
 	return trace.NewNoopTracerProvider().Tracer(name) //nolint:staticcheck
 }
 
 // filteredSpan wraps a trace.Span and applies the AttributeFilter before setting attributes.
-// Embeds the inner span so it satisfies the full trace.Span interface.
 type filteredSpan struct {
 	trace.Span
 	filter AttributeFilter
@@ -120,7 +119,6 @@ func (s *filteredSpan) SetAttributes(kv ...attribute.KeyValue) {
 	}
 }
 
-// wrapSpan wraps a span with the filter if one is configured.
 func wrapSpan(span trace.Span, cfg *TraceConfig) trace.Span {
 	if cfg != nil && cfg.AttributeFilter != nil {
 		return &filteredSpan{Span: span, filter: cfg.AttributeFilter}
