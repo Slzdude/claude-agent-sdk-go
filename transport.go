@@ -203,7 +203,7 @@ func (t *cliTransport) buildCommand() []string {
 				}
 			}
 		}
-		if effectiveSettingSources == nil {
+		if len(effectiveSettingSources) == 0 {
 			effectiveSettingSources = []SettingSource{SettingSourceUser, SettingSourceProject}
 		}
 	}
