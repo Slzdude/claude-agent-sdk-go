@@ -47,5 +47,14 @@ go mod tidy
 - `hooks.go` - Hook system (PreToolUse, PostToolUse, etc.)
 - `mcp.go` - MCP (Model Context Protocol) server integration
 - `errors.go` - Error types
+- `tracing/` - OpenTelemetry instrumentation layer (OpenInference semantic conventions)
+  - `tracing/options.go` - TraceConfig, AttributeFilter, context attribute helpers (WithSession, WithUser, WithMetadata, WithTags)
+  - `tracing/query.go` - TracedQuery wrapper, message channel processing
+  - `tracing/client.go` - TracedClient wrapper for ClaudeSDKClient
+  - `tracing/trace_internal.go` - Internal tracing: sessionTracer, toolSpanTracker, subagentSpanTracker, hook injection, attribute extraction
+  - `tracing/trace_query_test.go` - Guardrail tests (span hierarchy, hook registration, parent span, context attributes)
+  - `tracing/README.md` - Tracing usage documentation
 - `e2e/` - End-to-end tests (require real API key, build tag `e2e`)
 - `examples/` - Example programs demonstrating SDK usage
+  - `examples/langfuse_tracing/` - Langfuse OTLP setup example
+  - `examples/otel_collector/` - Generic OTel collector example

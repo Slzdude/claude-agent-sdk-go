@@ -1,7 +1,7 @@
 // Example: Using a custom OTel collector (e.g., Jaeger, Zipkin, Grafana Tempo).
 //
-// This example shows how to use the tracing package with any OTel-compatible
-// backend instead of Langfuse.
+// The SDK is backend-agnostic — it accepts any trace.TracerProvider.
+// This example shows how to set up a generic OTLP exporter.
 package main
 
 import (
@@ -10,8 +10,6 @@ import (
 	"log"
 
 	claude "github.com/Slzdude/claude-agent-sdk-go"
-	"github.com/Slzdude/claude-agent-sdk-go/tracing"
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -21,7 +19,7 @@ import (
 func main() {
 	ctx := context.Background()
 
-	// Setup custom OTLP exporter (e.g., to Jaeger or Grafana Tempo)
+	// 1. Create your exporter (Jaeger, Tempo, etc.)
 	exporter, err := otlptracehttp.New(ctx,
 		otlptracehttp.WithEndpoint("localhost:4318"),
 		otlptracehttp.WithInsecure(),
@@ -30,6 +28,7 @@ func main() {
 		log.Fatalf("Failed to create exporter: %v", err)
 	}
 
+	// 2. Create TracerProvider
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exporter),
 		sdktrace.WithResource(resource.NewWithAttributes(
@@ -44,16 +43,11 @@ func main() {
 		}
 	}()
 
-	otel.SetTracerProvider(tp)
-
-	// Use TracedQuery with the custom provider
-	opts := &claude.ClaudeAgentOptions{
+	// 3. Pass TracerProvider to the SDK — tracing is automatic
+	msgs, err := claude.Query(ctx, "Say hello", &claude.ClaudeAgentOptions{
 		PermissionMode: claude.PermissionModeBypassPermissions,
-	}
-
-	msgs, err := tracing.TracedQuery(ctx, "Say hello", opts,
-		tracing.WithTracerProvider(tp),
-	)
+		TracerProvider: tp,
+	})
 	if err != nil {
 		log.Fatalf("Query failed: %v", err)
 	}

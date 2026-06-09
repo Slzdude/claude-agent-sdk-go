@@ -2,14 +2,13 @@
 //
 // The SDK is backend-agnostic — it accepts any trace.TracerProvider.
 // This example shows how to set up a Langfuse OTLP exporter and pass it
-// to the SDK. The same pattern works for any OTel-compatible backend
-// (Jaeger, Grafana Tempo, Datadog, etc.).
+// to the SDK. The same pattern works for any OTel-compatible backend.
 //
 // Prerequisites:
 //
 //	export LANGFUSE_PUBLIC_KEY="pk-lf-..."
 //	export LANGFUSE_SECRET_KEY="sk-lf-..."
-//	export LANGFUSE_HOST="https://cloud.langfuse.com"  # optional
+//	export LANGFUSE_HOST="https://cloud.langfuse.com"  # or self-hosted
 package main
 
 import (
@@ -30,44 +29,35 @@ import (
 )
 
 // setupLangfuse creates a TracerProvider configured for Langfuse OTLP.
-// This is example code — adapt for your environment.
 func setupLangfuse(ctx context.Context) (*sdktrace.TracerProvider, error) {
-	publicKey := os.Getenv("LANGFUSE_PUBLIC_KEY")
-	secretKey := os.Getenv("LANGFUSE_SECRET_KEY")
+	pk := os.Getenv("LANGFUSE_PUBLIC_KEY")
+	sk := os.Getenv("LANGFUSE_SECRET_KEY")
 	host := os.Getenv("LANGFUSE_HOST")
 	if host == "" {
 		host = "https://cloud.langfuse.com"
 	}
-	serviceName := os.Getenv("OTEL_SERVICE_NAME")
-	if serviceName == "" {
-		serviceName = "claude-agent-app"
+	sn := os.Getenv("OTEL_SERVICE_NAME")
+	if sn == "" {
+		sn = "my-claude-app"
 	}
 
 	parsed, err := url.Parse(strings.TrimRight(host, "/"))
 	if err != nil {
-		return nil, fmt.Errorf("invalid LANGFUSE_HOST %q: %w", host, err)
+		return nil, fmt.Errorf("invalid LANGFUSE_HOST: %w", err)
 	}
 
-	opts := []otlptracehttp.Option{
+	exporter, err := otlptracehttp.New(ctx,
 		otlptracehttp.WithEndpoint(parsed.Host),
 		otlptracehttp.WithURLPath("/api/public/otel/v1/traces"),
 		otlptracehttp.WithHeaders(map[string]string{
-			"Authorization": "Basic " + base64.StdEncoding.EncodeToString(
-				[]byte(publicKey+":"+secretKey)),
+			"Authorization": "Basic " + base64.StdEncoding.EncodeToString([]byte(pk+":"+sk)),
 		}),
-	}
-	if parsed.Scheme == "http" {
-		opts = append(opts, otlptracehttp.WithInsecure())
-	}
-
-	exporter, err := otlptracehttp.New(ctx, opts...)
+	)
 	if err != nil {
 		return nil, err
 	}
 
-	res, err := resource.New(ctx,
-		resource.WithAttributes(semconv.ServiceName(serviceName)),
-	)
+	res, err := resource.New(ctx, resource.WithAttributes(semconv.ServiceName(sn)))
 	if err != nil {
 		return nil, err
 	}
@@ -91,6 +81,13 @@ func main() {
 		}
 	}()
 
+	// Inject metadata into context — appears on every span in Langfuse
+	ctx = tracing.WithSession(ctx, "my-session-id")
+	ctx = tracing.WithUser(ctx, "user-123")
+	ctx = tracing.WithMetadata(ctx, `{"env":"production","version":"1.0"}`)
+	ctx = tracing.WithTags(ctx, "production", "v1")
+
+	// Option A: Use TracedQuery (decorator pattern)
 	msgs, err := tracing.TracedQuery(ctx,
 		"What is 2+2? Reply with just the number.",
 		&claude.ClaudeAgentOptions{
@@ -101,6 +98,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("Query failed: %v", err)
 	}
+
+	// Option B (equivalent): Set TracerProvider directly on options
+	// msgs, err := claude.Query(ctx, "...", &claude.ClaudeAgentOptions{
+	//     TracerProvider: tp,
+	// })
 
 	for msg := range msgs {
 		switch m := msg.(type) {
