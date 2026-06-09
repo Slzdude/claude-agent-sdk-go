@@ -466,21 +466,52 @@ func mockProcessQuery(ctx context.Context, t *testing.T, prompt string, tr *cliT
 	}
 
 	out := make(chan Message, 64)
-	go func() {
-		defer close(out)
-		defer func() { _ = tr.close() }()
-		for raw := range rawCh {
-			msg, err := parseMessage(raw)
-			if err != nil || msg == nil {
-				continue
+
+	// Initialize tracing if TracerProvider is set (same as processQuery).
+	var st *sessionTracer
+	if configuredOpts.TracerProvider != nil {
+		st = newSessionTracer(configuredOpts.TracerProvider)
+		st.injectHooks(&configuredOpts)
+	}
+
+	if st != nil {
+		ctx, rootSpan := st.startQuerySpan(ctx, "ClaudeAgentSDK.Query", prompt, configuredOpts.Model)
+		go func() {
+			defer close(out)
+			defer func() { _ = tr.close() }()
+			defer rootSpan.End()
+			defer st.endAll()
+			outputMsgIndex := 0
+			for raw := range rawCh {
+				msg, err := parseMessage(raw)
+				if err != nil || msg == nil {
+					continue
+				}
+				st.processTracedMessage(ctx, rootSpan, msg, &outputMsgIndex)
+				select {
+				case out <- msg:
+				case <-ctx.Done():
+					return
+				}
 			}
-			select {
-			case out <- msg:
-			case <-ctx.Done():
-				return
+		}()
+	} else {
+		go func() {
+			defer close(out)
+			defer func() { _ = tr.close() }()
+			for raw := range rawCh {
+				msg, err := parseMessage(raw)
+				if err != nil || msg == nil {
+					continue
+				}
+				select {
+				case out <- msg:
+				case <-ctx.Done():
+					return
+				}
 			}
-		}
-	}()
+		}()
+	}
 	return out, nil
 }
 

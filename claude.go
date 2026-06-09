@@ -21,6 +21,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+
+	"go.opentelemetry.io/otel/codes"
 	"path/filepath"
 	"sync"
 	"time"
@@ -62,12 +65,14 @@ func QueryStream(ctx context.Context, promptCh <-chan map[string]any, opts *Clau
 type ClaudeSDKClient struct {
 	opts *ClaudeAgentOptions
 
-	mu           sync.Mutex
-	transport    *cliTransport
-	proto        *queryProto
-	msgCh        <-chan map[string]any
-	closed       bool
-	materialized *MaterializedResume
+	mu              sync.Mutex
+	transport       *cliTransport
+	proto           *queryProto
+	msgCh           <-chan map[string]any
+	closed          bool
+	materialized    *MaterializedResume
+	tracer          *sessionTracer // nil when opts.TracerProvider is nil
+	lastQueryPrompt string         // captured for tracing in ReceiveResponse
 }
 
 // NewClaudeSDKClient creates a new streaming client.  The underlying CLI
@@ -174,6 +179,13 @@ func NewClaudeSDKClient(ctx context.Context, opts *ClaudeAgentOptions) (*ClaudeS
 		materialized: materialized,
 	}
 
+	// Initialize tracing if TracerProvider is set.
+	if configuredOpts.TracerProvider != nil {
+		st := newSessionTracer(configuredOpts.TracerProvider)
+		st.injectHooks(&configuredOpts)
+		client.tracer = st
+	}
+
 	// Start the read loop BEFORE sending the initialize request.
 	// This mirrors Python SDK's `await query.start()` then `await query.initialize()`.
 	// Without this, Initialize() sends a control_request but no goroutine is reading
@@ -222,6 +234,12 @@ func (c *ClaudeSDKClient) Query(ctx context.Context, prompt string) error {
 	if err := c.checkConnected(); err != nil {
 		return err
 	}
+	// Capture prompt for tracing in ReceiveResponse.
+	if c.tracer != nil {
+		c.mu.Lock()
+		c.lastQueryPrompt = prompt
+		c.mu.Unlock()
+	}
 	return c.proto.SendUserMessage(ctx, prompt)
 }
 
@@ -235,6 +253,11 @@ func (c *ClaudeSDKClient) ReceiveMessages(ctx context.Context) <-chan Message {
 		close(out)
 		return out
 	}
+
+	if c.tracer != nil {
+		return c.tracedReceiveMessages(ctx, out)
+	}
+
 	go func() {
 		defer close(out)
 		for raw := range c.msgCh {
@@ -242,6 +265,33 @@ func (c *ClaudeSDKClient) ReceiveMessages(ctx context.Context) <-chan Message {
 			if err != nil || msg == nil {
 				continue
 			}
+			select {
+			case out <- msg:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return out
+}
+
+// tracedReceiveMessages wraps ReceiveMessages with a long-lived AGENT span.
+func (c *ClaudeSDKClient) tracedReceiveMessages(ctx context.Context, out chan Message) <-chan Message {
+	spanName := "ClaudeAgentSDK.ReceiveMessages"
+	ctx, rootSpan := c.tracer.startQuerySpan(ctx, spanName, "", c.opts.Model)
+
+	go func() {
+		defer close(out)
+		defer rootSpan.End()
+		defer c.tracer.endAll()
+
+		outputMsgIndex := 0
+		for raw := range c.msgCh {
+			msg, err := parseMessage(raw)
+			if err != nil || msg == nil {
+				continue
+			}
+			c.tracer.processTracedMessage(ctx, rootSpan, msg, &outputMsgIndex)
 			select {
 			case out <- msg:
 			case <-ctx.Done():
@@ -387,6 +437,11 @@ func (c *ClaudeSDKClient) ReceiveResponse(ctx context.Context) <-chan Message {
 		close(out)
 		return out
 	}
+
+	if c.tracer != nil {
+		return c.tracedReceiveResponse(ctx, out)
+	}
+
 	go func() {
 		defer close(out)
 		for raw := range c.msgCh {
@@ -394,6 +449,49 @@ func (c *ClaudeSDKClient) ReceiveResponse(ctx context.Context) <-chan Message {
 			if err != nil || msg == nil {
 				continue
 			}
+			select {
+			case out <- msg:
+			case <-ctx.Done():
+				return
+			}
+			if _, ok := msg.(*ResultMessage); ok {
+				return
+			}
+		}
+	}()
+	return out
+}
+
+// tracedReceiveResponse wraps ReceiveResponse with a per-turn AGENT span.
+func (c *ClaudeSDKClient) tracedReceiveResponse(ctx context.Context, out chan Message) <-chan Message {
+	c.mu.Lock()
+	prompt := c.lastQueryPrompt
+	c.lastQueryPrompt = ""
+	c.mu.Unlock()
+
+	spanName := "ClaudeAgentSDK.ReceiveResponse"
+	ctx, rootSpan := c.tracer.startQuerySpan(ctx, spanName, prompt, c.opts.Model)
+
+	go func() {
+		defer close(out)
+		defer rootSpan.End()
+		defer c.tracer.endAll()
+
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("panic in traced ReceiveResponse", "recover", r)
+				rootSpan.RecordError(fmt.Errorf("panic: %v", r))
+				rootSpan.SetStatus(codes.Error, fmt.Sprintf("panic: %v", r))
+			}
+		}()
+
+		outputMsgIndex := 0
+		for raw := range c.msgCh {
+			msg, err := parseMessage(raw)
+			if err != nil || msg == nil {
+				continue
+			}
+			c.tracer.processTracedMessage(ctx, rootSpan, msg, &outputMsgIndex)
 			select {
 			case out <- msg:
 			case <-ctx.Done():

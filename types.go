@@ -1,6 +1,10 @@
 package claude
 
-import "context"
+import (
+	"context"
+
+	"go.opentelemetry.io/otel/trace"
+)
 
 // PermissionMode controls how Claude handles permission requests.
 type PermissionMode string
@@ -903,6 +907,19 @@ type ClaudeAgentOptions struct {
 	// "batched" (default) coalesces and flushes per turn or threshold.
 	// "eager" flushes after every frame for near-real-time delivery.
 	SessionStoreFlush SessionStoreFlushMode
+
+	// TracerProvider enables OpenTelemetry tracing for this session.
+	// When set, Query/QueryStream/ReceiveResponse/ReceiveMessages
+	// automatically create AGENT spans with OpenInference attributes,
+	// and hooks are injected to track TOOL spans.
+	//
+	// Nil (default) disables tracing — zero overhead.
+	//
+	// Compatible with Langfuse via OTLP:
+	//
+	//	tp, _ := langfuse.SetupLangfuse(ctx, langfuse.LangfuseConfig{...})
+	//	opts := &ClaudeAgentOptions{TracerProvider: tp}
+	TracerProvider trace.TracerProvider `json:"-"` // not serialized
 }
 
 // -----------------------------------------------------------------------

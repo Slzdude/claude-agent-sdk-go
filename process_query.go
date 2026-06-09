@@ -3,8 +3,12 @@ package claude
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"log/slog"
 	"path/filepath"
 	"time"
+
+	"go.opentelemetry.io/otel/codes"
 )
 
 // processQuery is the core orchestrator: creates a transport, connects,
@@ -163,22 +167,64 @@ func processQuery(
 		}
 	}
 
-	go func() {
-		defer close(out)
-		defer func() { _ = t.close() }()
+	// Initialize tracing if TracerProvider is set.
+	var st *sessionTracer
+	if configuredOpts.TracerProvider != nil {
+		st = newSessionTracer(configuredOpts.TracerProvider)
+		st.injectHooks(&configuredOpts)
+	}
 
-		for raw := range rawCh {
-			msg, err := parseMessage(raw)
-			if err != nil || msg == nil {
-				continue
+	if st != nil {
+		// Traced path: create AGENT span and process messages with attribute extraction.
+		ctx, rootSpan := st.startQuerySpan(ctx, "ClaudeAgentSDK.Query", prompt, configuredOpts.Model)
+
+		go func() {
+			defer close(out)
+			defer func() { _ = t.close() }()
+			defer rootSpan.End()
+			defer st.endAll()
+
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("panic in traced message channel", "recover", r)
+					rootSpan.RecordError(fmt.Errorf("panic in message iteration: %v", r))
+					rootSpan.SetStatus(codes.Error, fmt.Sprintf("panic: %v", r))
+				}
+			}()
+
+			outputMsgIndex := 0
+			for raw := range rawCh {
+				msg, err := parseMessage(raw)
+				if err != nil || msg == nil {
+					continue
+				}
+				st.processTracedMessage(ctx, rootSpan, msg, &outputMsgIndex)
+				select {
+				case out <- msg:
+				case <-ctx.Done():
+					return
+				}
 			}
-			select {
-			case out <- msg:
-			case <-ctx.Done():
-				return
+		}()
+	} else {
+		// Non-traced path: simple passthrough.
+		go func() {
+			defer close(out)
+			defer func() { _ = t.close() }()
+
+			for raw := range rawCh {
+				msg, err := parseMessage(raw)
+				if err != nil || msg == nil {
+					continue
+				}
+				select {
+				case out <- msg:
+				case <-ctx.Done():
+					return
+				}
 			}
-		}
-	}()
+		}()
+	}
 
 	return out, nil
 }
