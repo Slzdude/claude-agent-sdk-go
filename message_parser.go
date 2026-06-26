@@ -142,6 +142,22 @@ func parseSystemMessage(raw map[string]any) (Message, error) {
 			n.Usage = usage
 		}
 		return n, nil
+	case "task_updated":
+		// Terminal task completion sometimes arrives only as a task_updated
+		// patch (no separate task_notification). Parsed defensively:
+		// patch may omit uuid/session_id and parsing must never raise.
+		msg := &TaskUpdatedMessage{
+			SystemMessage: SystemMessage{Subtype: subtype, Data: raw},
+			TaskID:        strVal(raw, "task_id"),
+			Patch:         make(map[string]any),
+			SessionID:     strVal(raw, "session_id"),
+			UUID:          strVal(raw, "uuid"),
+		}
+		if patch, ok := raw["patch"].(map[string]any); ok {
+			msg.Patch = patch
+			msg.Status = TaskUpdatedStatus(strVal(patch, "status"))
+		}
+		return msg, nil
 	case "mirror_error":
 		msg := &MirrorErrorMessage{
 			SystemMessage: SystemMessage{Subtype: subtype, Data: raw},

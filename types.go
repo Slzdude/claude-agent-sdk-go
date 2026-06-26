@@ -327,6 +327,11 @@ const (
 )
 
 // TaskNotificationMessage is emitted when a task finishes.
+//
+// Note: not every terminal task emits this message. Background tasks may
+// instead report completion only via a TaskUpdatedMessage whose patch.status
+// is terminal (see TerminalTaskStatuses). Consumers tracking active task IDs
+// should clear them on a terminal status from EITHER message.
 type TaskNotificationMessage struct {
 	SystemMessage
 	TaskID     string                 `json:"task_id"`
@@ -337,6 +342,46 @@ type TaskNotificationMessage struct {
 	SessionID  string                 `json:"session_id"`
 	ToolUseID  string                 `json:"tool_use_id,omitempty"`
 	Usage      *TaskUsage             `json:"usage,omitempty"`
+}
+
+// TaskUpdatedStatus enumerates all possible task states from task_updated patches.
+// pending/running/paused are non-terminal; completed/failed/killed are terminal.
+// Note: task_updated reports raw "killed"; task_notification maps it to "stopped".
+type TaskUpdatedStatus string
+
+const (
+	TaskUpdatedPending   TaskUpdatedStatus = "pending"
+	TaskUpdatedRunning   TaskUpdatedStatus = "running"
+	TaskUpdatedPaused    TaskUpdatedStatus = "paused"
+	TaskUpdatedCompleted TaskUpdatedStatus = "completed"
+	TaskUpdatedFailed    TaskUpdatedStatus = "failed"
+	TaskUpdatedKilled    TaskUpdatedStatus = "killed"
+)
+
+// TerminalTaskStatuses contains all task statuses that mean the task has finished.
+// This set spans both lifecycle vocabularies: task_notification reports "stopped"
+// (the CLI's mapped form of killed) while task_updated reports raw "killed".
+var TerminalTaskStatuses = map[string]bool{
+	"completed": true,
+	"failed":    true,
+	"stopped":   true,
+	"killed":    true,
+}
+
+// TaskUpdatedMessage is emitted when a background task's state changes.
+// The CLI emits system/task_updated events as a task moves through its lifecycle.
+// patch carries the changed fields (e.g. status, end_time); when patch.status
+// is terminal (see TerminalTaskStatuses) the task has finished.
+//
+// Lifecycle note: a background task's terminal state can arrive ONLY as a
+// TaskUpdatedMessage with no accompanying TaskNotificationMessage.
+type TaskUpdatedMessage struct {
+	SystemMessage
+	TaskID    string              `json:"task_id"`
+	Patch     map[string]any      `json:"patch"`
+	Status    TaskUpdatedStatus   `json:"status,omitempty"`
+	SessionID string              `json:"session_id,omitempty"`
+	UUID      string              `json:"uuid,omitempty"`
 }
 
 // MirrorErrorMessage is emitted when a SessionStore.append call fails.
