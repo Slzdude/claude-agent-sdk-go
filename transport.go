@@ -10,7 +10,6 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -60,21 +59,6 @@ func killActiveChildren() {
 			_ = cmd.Process.Signal(syscall.SIGTERM)
 		}
 	}
-}
-
-func init() {
-	// Register signal handler to kill active children on parent exit.
-	// This prevents orphaned claude processes when the parent crashes or exits
-	// without calling Close().
-	// On Windows, only os.Interrupt is reliably supported; syscall.SIGTERM
-	// is defined but may not be delivered by the OS.
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt)
-	go func() {
-		<-c
-		killActiveChildren()
-		os.Exit(1)
-	}()
 }
 
 // transport manages the raw subprocess I/O.
