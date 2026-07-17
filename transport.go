@@ -606,9 +606,12 @@ func (t *cliTransport) close() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.cmd != nil && t.cmd.Process != nil {
-		// Wait up to 5s for natural exit after stdin close.
+		// Wait in a goroutine — only one Wait() call is allowed per process,
+		// so all escalation paths read from the same channel.
 		done := make(chan error, 1)
 		go func() { done <- t.cmd.Wait() }()
+
+		// Wait up to 5s for natural exit after stdin close.
 		select {
 		case <-done:
 			unregisterChild(t.cmd)
@@ -623,9 +626,14 @@ func (t *cliTransport) close() error {
 			return nil
 		case <-time.After(5 * time.Second):
 		}
-		// SIGKILL fallback.
+		// SIGKILL fallback — still read from the same channel.
 		_ = t.cmd.Process.Kill()
-		_ = t.cmd.Wait()
+		select {
+		case <-done:
+			unregisterChild(t.cmd)
+			return nil
+		case <-time.After(5 * time.Second):
+		}
 	}
 	// Only stop tracking a child we actually reaped. A still-running
 	// process stays in the set so the atexit reaper gets a chance at it.
