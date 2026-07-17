@@ -956,11 +956,8 @@ func TestMockProcessQuery_EmptyPrompt(t *testing.T) {
 
 	// Should still receive the result.
 	collected := 0
-	for msg := range msgs {
+	for range msgs {
 		collected++
-		if _, ok := msg.(*ResultMessage); !ok {
-			// Non-result messages are fine too.
-		}
 	}
 
 	if collected < 1 {

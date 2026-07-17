@@ -186,7 +186,7 @@ func TestTracing_HookFiresWithValidParentSpan(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	ctx, rootSpan := st.startQuerySpan(ctx, "test-query", "test-prompt", "claude-sonnet-4-20250514")
+	_, rootSpan := st.startQuerySpan(ctx, "test-query", "test-prompt", "claude-sonnet-4-20250514")
 
 	if st.toolTracker.parentSpan == nil {
 		t.Fatal("Bug 3: toolTracker.parentSpan is nil after startQuerySpan")
@@ -278,7 +278,7 @@ func TestTracing_ContextAttributesPropagated(t *testing.T) {
 	ctx = instrumentation.WithMetadata(ctx, `{"key":"value"}`)
 	ctx = instrumentation.WithTags(ctx, "tag1", "tag2")
 
-	ctx, rootSpan := st.startQuerySpan(ctx, "test-attrs", "prompt", "model")
+	_, rootSpan := st.startQuerySpan(ctx, "test-attrs", "prompt", "model")
 	rootSpan.End()
 
 	spans := exporter.GetSpans()
