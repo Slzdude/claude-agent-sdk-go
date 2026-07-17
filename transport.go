@@ -248,10 +248,10 @@ func (t *cliTransport) buildCommand() []string {
 		cmd = append(cmd, "--continue")
 	}
 	if opts.Resume != "" {
-		cmd = append(cmd, "--resume", opts.Resume)
+		cmd = append(cmd, "--resume="+opts.Resume)
 	}
 	if opts.SessionID != "" {
-		cmd = append(cmd, "--session-id", opts.SessionID)
+		cmd = append(cmd, "--session-id="+opts.SessionID)
 	}
 	if opts.ForkSession {
 		cmd = append(cmd, "--fork-session")
@@ -494,25 +494,39 @@ func (t *cliTransport) drainStderr(r io.Reader) {
 }
 
 // readMessages delivers raw JSON objects from stdout into a channel.
+// parseStdoutLine parses one complete line of the CLI's NDJSON stdout.
+// Returns (msg, nil) for valid JSON lines, (nil, nil) for blank/non-JSON lines,
+// and (nil, err) for lines that look like JSON but fail to parse.
+// Matches Python SDK's _parse_stdout_line.
+func parseStdoutLine(line string) (map[string]any, error) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return nil, nil
+	}
+	if line[0] != '{' {
+		log.Printf("Skipping non-JSON line from CLI stdout: %s", line[:min(len(line), 200)])
+		return nil, nil
+	}
+	var msg map[string]any
+	if err := json.Unmarshal([]byte(line), &msg); err != nil {
+		return nil, &CLIJSONDecodeError{Line: line, Cause: err}
+	}
+	return msg, nil
+}
+
 func (t *cliTransport) readMessages(ctx context.Context) <-chan map[string]any {
 	ch := make(chan map[string]any, 256)
 	go func() {
 		defer close(ch)
 		for t.stdout.Scan() {
 			line := t.stdout.Text()
-			if line == "" {
-				continue
-			}
-			// Skip non-JSON lines (e.g. [SandboxDebug]) when they don't
-			// start with '{' — prevents buffer corruption.
-			if len(line) > 0 && line[0] != '{' {
-				log.Printf("Skipping non-JSON line from CLI stdout: %s", line[:min(len(line), 200)])
-				continue
-			}
-			var msg map[string]any
-			if err := json.Unmarshal([]byte(line), &msg); err != nil {
-				t.setErr(&CLIJSONDecodeError{Line: line, Cause: err})
+			msg, err := parseStdoutLine(line)
+			if err != nil {
+				t.setErr(err)
 				return
+			}
+			if msg == nil {
+				continue
 			}
 			select {
 			case ch <- msg:
@@ -591,15 +605,13 @@ func (t *cliTransport) close() error {
 	// write and cause the last assistant message to be lost.
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.cmd != nil {
-		unregisterChild(t.cmd)
-	}
 	if t.cmd != nil && t.cmd.Process != nil {
 		// Wait up to 5s for natural exit after stdin close.
 		done := make(chan error, 1)
 		go func() { done <- t.cmd.Wait() }()
 		select {
 		case <-done:
+			unregisterChild(t.cmd)
 			return nil
 		case <-time.After(5 * time.Second):
 		}
@@ -607,12 +619,18 @@ func (t *cliTransport) close() error {
 		_ = t.cmd.Process.Signal(os.Interrupt)
 		select {
 		case <-done:
+			unregisterChild(t.cmd)
 			return nil
 		case <-time.After(5 * time.Second):
 		}
 		// SIGKILL fallback.
 		_ = t.cmd.Process.Kill()
 		_ = t.cmd.Wait()
+	}
+	// Only stop tracking a child we actually reaped. A still-running
+	// process stays in the set so the atexit reaper gets a chance at it.
+	if t.cmd != nil && t.cmd.ProcessState != nil && t.cmd.ProcessState.Exited() {
+		unregisterChild(t.cmd)
 	}
 	return nil
 }

@@ -1,5 +1,7 @@
 package claude
 
+import "fmt"
+
 // parseMessage converts a raw JSON object (from the CLI) into a typed Message.
 func parseMessage(raw map[string]any) (Message, error) {
 	t := strVal(raw, "type")
@@ -219,6 +221,15 @@ func parseAssistantMessage(raw map[string]any) (*AssistantMessage, error) {
 		UUID:            strVal(raw, "uuid"),
 	}
 	if msg, ok := raw["message"].(map[string]any); ok {
+		rawContent := msg["content"]
+		if rawContent == nil {
+			// No content field — valid for some assistant messages.
+		} else if _, ok := rawContent.([]any); !ok {
+			return nil, &MessageParseError{
+				Message: fmt.Sprintf("Invalid assistant content (expected list, got %T)", rawContent),
+				Data:    raw,
+			}
+		}
 		blocks, err := parseContentBlocks(contentArr(msg, "content"))
 		if err != nil {
 			return nil, err
@@ -354,7 +365,10 @@ func parseContentBlocks(items []any) ([]ContentBlock, error) {
 	for _, item := range items {
 		raw, ok := item.(map[string]any)
 		if !ok {
-			continue
+			return nil, &MessageParseError{
+				Message: fmt.Sprintf("Invalid content block (expected dict, got %T)", item),
+				Data:    map[string]any{"content_block": item},
+			}
 		}
 		block, err := parseContentBlock(raw)
 		if err != nil {

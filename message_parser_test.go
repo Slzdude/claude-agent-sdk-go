@@ -1002,7 +1002,7 @@ func TestParseTaskUpdatedMessage_TerminalStatuses(t *testing.T) {
 		"paused":    false,
 	}
 	for status, want := range terminal {
-		got := TerminalTaskStatuses[status]
+		got := IsTerminalTaskStatus(status)
 		if got != want {
 			t.Errorf("TerminalTaskStatuses[%q] = %v, want %v", status, got, want)
 		}
@@ -1047,7 +1047,7 @@ func TestParseTaskUpdatedMessage_RoundTrip(t *testing.T) {
 		t.Errorf("Patch.end_time = %v", tum.Patch["end_time"])
 	}
 	// Verify terminal status detection.
-	if !TerminalTaskStatuses[string(tum.Status)] {
+	if !IsTerminalTaskStatus(string(tum.Status)) {
 		t.Errorf("killed should be terminal")
 	}
 }
@@ -1103,7 +1103,7 @@ func TestParseTaskUpdatedMessage_NonTerminalStatuses(t *testing.T) {
 		if string(tum.Status) != status {
 			t.Errorf("status %q: got %q", status, tum.Status)
 		}
-		if TerminalTaskStatuses[status] {
+		if IsTerminalTaskStatus(status) {
 			t.Errorf("status %q should NOT be terminal", status)
 		}
 	}
@@ -1148,7 +1148,7 @@ func TestParseTaskUpdatedMessage_KilledIsTerminal(t *testing.T) {
 	if tum.Status != TaskUpdatedKilled {
 		t.Errorf("Status = %q, want %q", tum.Status, TaskUpdatedKilled)
 	}
-	if !TerminalTaskStatuses[string(tum.Status)] {
+	if !IsTerminalTaskStatus(string(tum.Status)) {
 		t.Errorf("killed should be terminal")
 	}
 }

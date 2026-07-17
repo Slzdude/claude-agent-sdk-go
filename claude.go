@@ -89,6 +89,9 @@ func NewClaudeSDKClient(ctx context.Context, opts *ClaudeAgentOptions) (*ClaudeS
 		return nil, &CLIConnectionError{Message: err.Error()}
 	}
 
+	// Advisory: warn if can_use_tool is shadowed by allowed_tools or bypassPermissions.
+	WarnIfCanUseToolShadowed(opts)
+
 	// resume/continue + session_store: load the session from the store into a
 	// temp CLAUDE_CONFIG_DIR for the subprocess to resume from.
 	materialized, err := MaterializeResumeSession(ctx, opts)

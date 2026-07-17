@@ -2,6 +2,9 @@ package claude
 
 import (
 	"context"
+	"fmt"
+	"log"
+	"strings"
 
 	"go.opentelemetry.io/otel/trace"
 )
@@ -361,11 +364,23 @@ const (
 // TerminalTaskStatuses contains all task statuses that mean the task has finished.
 // This set spans both lifecycle vocabularies: task_notification reports "stopped"
 // (the CLI's mapped form of killed) while task_updated reports raw "killed".
-var TerminalTaskStatuses = map[string]bool{
-	"completed": true,
-	"failed":    true,
-	"stopped":   true,
-	"killed":    true,
+// Returns a new map each call to prevent accidental mutation.
+func TerminalTaskStatuses() map[string]bool {
+	return map[string]bool{
+		"completed": true,
+		"failed":    true,
+		"stopped":   true,
+		"killed":    true,
+	}
+}
+
+// IsTerminalTaskStatus returns true if the given status means the task has finished.
+func IsTerminalTaskStatus(status string) bool {
+	switch status {
+	case "completed", "failed", "stopped", "killed":
+		return true
+	}
+	return false
 }
 
 // TaskUpdatedMessage is emitted when a background task's state changes.
@@ -1047,4 +1062,98 @@ type SessionMessage struct {
 	SessionID       string         `json:"session_id"`
 	Message         map[string]any `json:"message"`
 	ParentToolUseID *string        `json:"parent_tool_use_id,omitempty"`
+}
+
+// ---------------------------------------------------------------------------
+// CanUseTool shadowed warning
+// ---------------------------------------------------------------------------
+
+// WholeToolAllowed returns the tool name if an allowed_tools entry allows
+// a whole tool outright, or "" if it only allows narrowed invocations.
+//
+// Mirrors the CLI's rule parser: an entry allows a whole tool when it has
+// no "(...)" specifier ("Read"), or when the specifier is empty or a lone
+// wildcard ("Read()", "Read(*)"). A real specifier ("Bash(ls:*)") only
+// allows matching invocations.
+func WholeToolAllowed(entry string) string {
+	entry = strings.TrimSpace(entry)
+	if entry == "" {
+		return ""
+	}
+	openIdx := strings.Index(entry, "(")
+	if openIdx == -1 {
+		return entry
+	}
+	if openIdx == 0 || !strings.HasSuffix(entry, ")") {
+		return ""
+	}
+	inner := entry[openIdx+1 : len(entry)-1]
+	if inner == "" || inner == "*" {
+		return entry[:openIdx]
+	}
+	return ""
+}
+
+// GetCanUseToolShadowedWarning returns the shadowing warning message for
+// these options, or "" if no shadowing is detected.
+func GetCanUseToolShadowedWarning(mode PermissionMode, allowedTools []string, skills any) string {
+	if mode == PermissionModeBypassPermissions {
+		return "can_use_tool will not be invoked: permission_mode " +
+			"'bypassPermissions' auto-approves every tool call (except " +
+			"explicit deny rules) before the callback is consulted. To gate " +
+			"every tool call, use a PreToolUse hook instead."
+	}
+
+	// skills="all" makes the transport append a bare "Skill" to the effective
+	// allowed_tools, so it shadows the callback just like a hand-written entry.
+	effective := make([]string, len(allowedTools))
+	copy(effective, allowedTools)
+	if skills == "all" {
+		hasSkill := false
+		for _, t := range effective {
+			if t == "Skill" {
+				hasSkill = true
+				break
+			}
+		}
+		if !hasSkill {
+			effective = append(effective, "Skill")
+		}
+	}
+
+	// Dedupe while preserving order.
+	seen := make(map[string]bool)
+	var shadowed []string
+	for _, entry := range effective {
+		tool := WholeToolAllowed(entry)
+		if tool == "" || seen[tool] {
+			continue
+		}
+		seen[tool] = true
+		shadowed = append(shadowed, tool)
+	}
+
+	if len(shadowed) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(
+		"can_use_tool will not be invoked for: %s. "+
+			"An allowed_tools entry that allows a whole tool auto-approves it "+
+			"before the callback is consulted. To gate every tool call, use a "+
+			"PreToolUse hook; or narrow the entry so calls fall through to "+
+			"can_use_tool.",
+		strings.Join(shadowed, ", "),
+	)
+}
+
+// WarnIfCanUseToolShadowed logs a warning if can_use_tool is shadowed by
+// allowed_tools or bypassPermissions. Called once per query construction.
+func WarnIfCanUseToolShadowed(opts *ClaudeAgentOptions) {
+	if opts.CanUseTool == nil {
+		return
+	}
+	msg := GetCanUseToolShadowedWarning(opts.PermissionMode, opts.AllowedTools, opts.Skills)
+	if msg != "" {
+		log.Printf("[warning] %s", msg)
+	}
 }

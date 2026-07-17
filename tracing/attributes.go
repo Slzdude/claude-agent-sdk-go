@@ -29,6 +29,8 @@ func extractMessageAttributes(span trace.Span, msg claude.Message, outputMsgInde
 		extractTaskProgressAttributes(span, m)
 	case *claude.TaskNotificationMessage:
 		extractTaskNotificationAttributes(span, m)
+	case *claude.TaskUpdatedMessage:
+		extractTaskUpdatedAttributes(span, m)
 	}
 }
 
@@ -126,6 +128,19 @@ func extractTaskNotificationAttributes(span trace.Span, msg *claude.TaskNotifica
 	}
 	if msg.Usage != nil && msg.Usage.TotalTokens > 0 {
 		span.SetAttributes(attribute.Int64(semconv.LLMTokenCountTotal, int64(msg.Usage.TotalTokens)))
+	}
+}
+
+// extractTaskUpdatedAttributes extracts attributes from TaskUpdatedMessage.
+func extractTaskUpdatedAttributes(span trace.Span, msg *claude.TaskUpdatedMessage) {
+	if msg.SessionID != "" {
+		span.SetAttributes(attribute.String(semconv.SessionID, msg.SessionID))
+	}
+	if msg.TaskID != "" {
+		span.SetAttributes(attribute.String("task.id", msg.TaskID))
+	}
+	if msg.Status != "" {
+		span.SetAttributes(attribute.String("task.status", string(msg.Status)))
 	}
 }
 

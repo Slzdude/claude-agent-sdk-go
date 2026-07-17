@@ -455,9 +455,42 @@ func (s *subagentSpanTracker) processMessage(msg Message) {
 	switch m := msg.(type) {
 	case *TaskNotificationMessage:
 		s.handleTaskNotification(m)
+	case *TaskUpdatedMessage:
+		// Terminal task_updated without task_notification: end the span.
+		if IsTerminalTaskStatus(string(m.Status)) {
+			s.handleTaskUpdatedTerminal(m)
+		}
 	case *TaskStartedMessage:
 		s.ensureSubagentSpan(m.ToolUseID, m.TaskID, m.Description)
 	}
+}
+
+func (s *subagentSpanTracker) handleTaskUpdatedTerminal(msg *TaskUpdatedMessage) {
+	// TaskUpdatedMessage has no ToolUseID, so find the agent by TaskID or last active.
+	var agentID string
+	for aid := range s.agents {
+		agentID = aid
+		break
+	}
+	if agentID == "" {
+		return
+	}
+
+	span, ok := s.agents[agentID]
+	if !ok {
+		return
+	}
+	delete(s.agents, agentID)
+
+	switch msg.Status {
+	case TaskUpdatedCompleted:
+		span.SetStatus(codes.Ok, "")
+	case TaskUpdatedFailed:
+		span.SetStatus(codes.Error, "subagent task failed")
+	case TaskUpdatedKilled:
+		span.SetStatus(codes.Error, "subagent task killed")
+	}
+	span.End()
 }
 
 func (s *subagentSpanTracker) handleTaskNotification(msg *TaskNotificationMessage) {
@@ -567,6 +600,16 @@ func extractMessageAttributesInternal(span trace.Span, msg Message, outputMsgInd
 		}
 		if m.Usage != nil && m.Usage.TotalTokens > 0 {
 			span.SetAttributes(attribute.Int64(semconv.LLMTokenCountTotal, int64(m.Usage.TotalTokens)))
+		}
+	case *TaskUpdatedMessage:
+		if m.SessionID != "" {
+			span.SetAttributes(attribute.String(semconv.SessionID, m.SessionID))
+		}
+		if m.TaskID != "" {
+			span.SetAttributes(attribute.String("task.id", m.TaskID))
+		}
+		if m.Status != "" {
+			span.SetAttributes(attribute.String("task.status", string(m.Status)))
 		}
 	}
 }
