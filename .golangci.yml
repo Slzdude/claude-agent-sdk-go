@@ -10,15 +10,3 @@ linters:
     - staticcheck
   disable:
     - errcheck
-
-issues:
-  exclude-dirs:
-    - examples
-
-  exclude-rules:
-    # Suppress all linters in test files
-    - path: "_test\\.go$"
-      linters:
-        - ineffassign
-        - unused
-        - staticcheck
