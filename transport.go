@@ -694,13 +694,3 @@ func contains(slice []string, s string) bool {
 	}
 	return false
 }
-
-func appendIfMissing(env []string, entry string) []string {
-	key := strings.SplitN(entry, "=", 2)[0] + "="
-	for _, e := range env {
-		if strings.HasPrefix(e, key) {
-			return env
-		}
-	}
-	return append(env, entry)
-}

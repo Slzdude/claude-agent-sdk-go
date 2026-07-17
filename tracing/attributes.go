@@ -2,7 +2,6 @@ package tracing
 
 import (
 	"encoding/json"
-	"fmt"
 	"strconv"
 
 	semconv "github.com/Arize-ai/openinference/go/openinference-semantic-conventions"
@@ -290,13 +289,4 @@ func safeInt(m map[string]any, key string) int {
 // formatPromptValue formats a prompt for span input.
 func formatPromptValue(prompt string) (value string, mimeType string) {
 	return prompt, semconv.MimeTypeText
-}
-
-// formatPromptJSON formats a structured prompt as JSON.
-func formatPromptJSON(v any) (value string, mimeType string) {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return fmt.Sprintf("%v", v), semconv.MimeTypeText
-	}
-	return string(b), semconv.MimeTypeJSON
 }

@@ -69,7 +69,7 @@ func DeleteSession(sessionID, directory string) error {
 	}
 	// Cascade: remove subagent transcript directory if it exists.
 	subagentDir := filepath.Join(filepath.Dir(path), sessionID)
-	os.RemoveAll(subagentDir) // ignore errors — directory may not exist
+	_ = os.RemoveAll(subagentDir) // ignore errors — directory may not exist
 	return nil
 }
 

@@ -124,7 +124,7 @@ func (q *queryProto) ReportMirrorError(key *SessionKey, errMsg string) {
 	if key != nil {
 		msg["session_id"] = key.SessionID
 	}
-	defer func() { recover() }() // guard against writing to closed channel
+	defer func() { _ = recover() }() // guard against writing to closed channel
 	select {
 	case q.rawOut <- msg:
 	default:

@@ -118,7 +118,10 @@ func TestTracing_HooksRegisteredBeforeInitialize(t *testing.T) {
 	}
 
 	rawCh := q.Run(context.Background())
-	go func() { for range rawCh {} }()
+	go func() {
+		for range rawCh {
+		}
+	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -477,10 +480,10 @@ func mockTransportWithToolUseHooks(t *testing.T, tp *sdktrace.TracerProvider) *c
 				"type":       "control_request",
 				"request_id": "post_hook_1",
 				"request": map[string]any{
-					"subtype":      "hook_callback",
-					"callback_id":  postHookID,
-					"input":        map[string]any{"tool_name": "Bash", "tool_response": "hello"},
-					"tool_use_id":  "tu_001",
+					"subtype":     "hook_callback",
+					"callback_id": postHookID,
+					"input":       map[string]any{"tool_name": "Bash", "tool_response": "hello"},
+					"tool_use_id": "tu_001",
 				},
 			})
 			_, _ = w.Write(hookLine)

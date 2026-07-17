@@ -392,11 +392,11 @@ func IsTerminalTaskStatus(status string) bool {
 // TaskUpdatedMessage with no accompanying TaskNotificationMessage.
 type TaskUpdatedMessage struct {
 	SystemMessage
-	TaskID    string              `json:"task_id"`
-	Patch     map[string]any      `json:"patch"`
-	Status    TaskUpdatedStatus   `json:"status,omitempty"`
-	SessionID string              `json:"session_id,omitempty"`
-	UUID      string              `json:"uuid,omitempty"`
+	TaskID    string            `json:"task_id"`
+	Patch     map[string]any    `json:"patch"`
+	Status    TaskUpdatedStatus `json:"status,omitempty"`
+	SessionID string            `json:"session_id,omitempty"`
+	UUID      string            `json:"uuid,omitempty"`
 }
 
 // MirrorErrorMessage is emitted when a SessionStore.append call fails.

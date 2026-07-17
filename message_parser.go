@@ -473,16 +473,3 @@ func contentArr(m map[string]any, key string) []any {
 	}
 	return nil
 }
-
-// parseMirrorErrorMessage constructs a MirrorErrorMessage directly from a raw dict.
-// Used by the batcher callback to inject mirror errors into the message stream.
-func parseMirrorErrorMessage(raw map[string]any) Message {
-	msg := &MirrorErrorMessage{
-		SystemMessage: SystemMessage{Subtype: "mirror_error", Data: raw},
-		Error:         strVal(raw, "error"),
-	}
-	if key, ok := raw["key"].(*SessionKey); ok {
-		msg.Key = key
-	}
-	return msg
-}

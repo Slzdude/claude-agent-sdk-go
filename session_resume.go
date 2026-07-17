@@ -89,13 +89,13 @@ func MaterializeResumeSession(ctx context.Context, opts *ClaudeAgentOptions) (*M
 
 	projectDir := filepath.Join(tmpBase, "projects", projectKey)
 	if err := os.MkdirAll(projectDir, 0o700); err != nil {
-		os.RemoveAll(tmpBase)
+		_ = os.RemoveAll(tmpBase)
 		return nil, err
 	}
 
 	// Write main transcript.
 	if err := writeJSONL(filepath.Join(projectDir, resolved.sessionID+".jsonl"), resolved.entries); err != nil {
-		os.RemoveAll(tmpBase)
+		_ = os.RemoveAll(tmpBase)
 		return nil, err
 	}
 
@@ -104,7 +104,7 @@ func MaterializeResumeSession(ctx context.Context, opts *ClaudeAgentOptions) (*M
 
 	// Materialize subagent transcripts.
 	if err := materializeSubkeys(ctx, store, tmpBase, projectDir, projectKey, resolved.sessionID, timeout); err != nil {
-		os.RemoveAll(tmpBase)
+		_ = os.RemoveAll(tmpBase)
 		return nil, err
 	}
 
@@ -224,7 +224,7 @@ func writeJSONL(path string, entries []SessionStoreEntry) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	for _, e := range entries {
 		b, err := json.Marshal(e)
@@ -262,7 +262,7 @@ func copyAuthFiles(tmpBase string, env map[string]string) {
 	}
 
 	// Copy .claude.json
-	claudeJSONSrc := filepath.Join(sourceConfigDir, ".claude.json")
+	var claudeJSONSrc string
 	if callerConfigDir != "" {
 		claudeJSONSrc = filepath.Join(callerConfigDir, ".claude.json")
 	} else {
@@ -376,9 +376,9 @@ func materializeSubkeys(ctx context.Context, store SessionStore, tmpBase, projec
 
 		// Write transcript.
 		subFile := filepath.Join(sessionDir, subpath+".jsonl")
-		os.MkdirAll(filepath.Dir(subFile), 0o700)
+		_ = os.MkdirAll(filepath.Dir(subFile), 0o700)
 		if len(transcript) > 0 {
-			writeJSONL(subFile, transcript)
+			_ = writeJSONL(subFile, transcript)
 		}
 
 		// Write .meta.json sidecar (last metadata entry wins).
@@ -453,5 +453,5 @@ func rmtreeWithRetry(path string) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	os.RemoveAll(path) // final attempt, ignore error
+	_ = os.RemoveAll(path) // final attempt, ignore error
 }

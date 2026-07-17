@@ -1152,7 +1152,7 @@ func importJSONLFileToStore(store SessionStore, filePath string, key SessionKey)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	const batchSize = MirrorMaxPendingEntries // 500, matches Python MAX_PENDING_ENTRIES
 	var entries []SessionStoreEntry
@@ -1434,27 +1434,8 @@ func getClaudeConfigDir() string {
 	return normalizeUnicode(filepath.Join(home, ".claude"))
 }
 
-// getClaudeConfigDirWithOverride is like getClaudeConfigDir but checks
-// envOverride["CLAUDE_CONFIG_DIR"] before os.Getenv. This lets callers
-// that pass a custom CLAUDE_CONFIG_DIR to a subprocess resolve the same
-// directory the subprocess writes to.
-func getClaudeConfigDirWithOverride(envOverride map[string]string) string {
-	if envOverride != nil {
-		if d, ok := envOverride["CLAUDE_CONFIG_DIR"]; ok && d != "" {
-			return normalizeUnicode(d)
-		}
-	}
-	return getClaudeConfigDir()
-}
-
 func getProjectsDir() string {
 	return filepath.Join(getClaudeConfigDir(), "projects")
-}
-
-// getProjectsWithOverride returns the projects directory, consulting
-// envOverride["CLAUDE_CONFIG_DIR"] before os.Getenv.
-func getProjectsWithOverride(envOverride map[string]string) string {
-	return filepath.Join(getClaudeConfigDirWithOverride(envOverride), "projects")
 }
 
 func getProjectDir(projectPath string) string {
