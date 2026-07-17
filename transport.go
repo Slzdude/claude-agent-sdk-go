@@ -23,7 +23,7 @@ import (
 const (
 	defaultMaxBufferSize     = 1024 * 1024
 	minimumClaudeCodeVersion = "2.0.0"
-	sdkVersion               = "0.2.110"
+	sdkVersion               = "0.2.121"
 )
 
 // Track live CLI subprocesses so we can terminate them when the parent process
