@@ -1,0 +1,30 @@
+linters:
+  enable:
+    - errcheck
+    - ineffassign
+    - unused
+    - staticcheck
+
+linters-settings:
+  errcheck:
+    # Suppress errcheck in test files (defer client.Close(), os.MkdirAll, etc.)
+    exclude-functions:
+      - (io.Closer).Close
+
+issues:
+  exclude-rules:
+    # Suppress errcheck in test files — test setup helpers use defer Close()
+    # without checking errors, which is standard Go test practice.
+    - path: _test\.go
+      linters:
+        - errcheck
+    # Suppress errcheck for defer cleanup in core library
+    - linters:
+        - errcheck
+      text: "Error return value of `.*Close` is not checked"
+    - linters:
+        - errcheck
+      text: "Error return value of `os\\.RemoveAll` is not checked"
+    - linters:
+        - errcheck
+      text: "Error return value is not checked"
