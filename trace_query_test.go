@@ -118,7 +118,10 @@ func TestTracing_HooksRegisteredBeforeInitialize(t *testing.T) {
 	}
 
 	rawCh := q.Run(context.Background())
-	go func() { for range rawCh {} }()
+	go func() {
+		for range rawCh {
+		}
+	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -183,7 +186,7 @@ func TestTracing_HookFiresWithValidParentSpan(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	ctx, rootSpan := st.startQuerySpan(ctx, "test-query", "test-prompt", "claude-sonnet-4-20250514")
+	_, rootSpan := st.startQuerySpan(ctx, "test-query", "test-prompt", "claude-sonnet-4-20250514")
 
 	if st.toolTracker.parentSpan == nil {
 		t.Fatal("Bug 3: toolTracker.parentSpan is nil after startQuerySpan")
@@ -275,7 +278,7 @@ func TestTracing_ContextAttributesPropagated(t *testing.T) {
 	ctx = instrumentation.WithMetadata(ctx, `{"key":"value"}`)
 	ctx = instrumentation.WithTags(ctx, "tag1", "tag2")
 
-	ctx, rootSpan := st.startQuerySpan(ctx, "test-attrs", "prompt", "model")
+	_, rootSpan := st.startQuerySpan(ctx, "test-attrs", "prompt", "model")
 	rootSpan.End()
 
 	spans := exporter.GetSpans()
@@ -477,10 +480,10 @@ func mockTransportWithToolUseHooks(t *testing.T, tp *sdktrace.TracerProvider) *c
 				"type":       "control_request",
 				"request_id": "post_hook_1",
 				"request": map[string]any{
-					"subtype":      "hook_callback",
-					"callback_id":  postHookID,
-					"input":        map[string]any{"tool_name": "Bash", "tool_response": "hello"},
-					"tool_use_id":  "tu_001",
+					"subtype":     "hook_callback",
+					"callback_id": postHookID,
+					"input":       map[string]any{"tool_name": "Bash", "tool_response": "hello"},
+					"tool_use_id": "tu_001",
 				},
 			})
 			_, _ = w.Write(hookLine)

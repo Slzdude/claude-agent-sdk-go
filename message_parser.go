@@ -2,6 +2,32 @@ package claude
 
 import "fmt"
 
+// parseOrigin returns data["origin"] if it is a well-formed origin object.
+// Passed through as-is (including keys this SDK version doesn't model).
+func parseOrigin(data map[string]any) *MessageOrigin {
+	origin, ok := data["origin"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	kind, _ := origin["kind"].(string)
+	if kind == "" {
+		return nil
+	}
+	o := &MessageOrigin{Kind: kind}
+	o.Server = strVal(origin, "server")
+	o.From = strVal(origin, "from")
+	o.Name = strVal(origin, "name")
+	o.FromSession = strVal(origin, "fromSession")
+	o.SenderTaskID = strVal(origin, "senderTaskId")
+	o.Body = strVal(origin, "body")
+	if pid, ok := origin["verifiedPeerPid"].(float64); ok {
+		v := int(pid)
+		o.VerifiedPeerPID = &v
+	}
+	o.Subkind = TaskNotificationOriginSubkind(strVal(origin, "subkind"))
+	return o
+}
+
 // parseMessage converts a raw JSON object (from the CLI) into a typed Message.
 func parseMessage(raw map[string]any) (Message, error) {
 	t := strVal(raw, "type")
@@ -75,6 +101,12 @@ func parseMessage(raw map[string]any) (Message, error) {
 		return parseStreamEvent(raw)
 	case "rate_limit_event":
 		return parseRateLimitEvent(raw)
+	case "conversation_reset":
+		return &ConversationResetMessage{
+			NewConversationID: strVal(raw, "new_conversation_id"),
+			UUID:              strVal(raw, "uuid"),
+			SessionID:         strVal(raw, "session_id"),
+		}, nil
 	case "":
 		// Missing type field — match Python SDK which raises MessageParseError.
 		return nil, &MessageParseError{Message: "message missing 'type' field", Data: raw}
@@ -195,6 +227,7 @@ func parseUserMessage(raw map[string]any) (*UserMessage, error) {
 	m := &UserMessage{
 		UUID:            strVal(raw, "uuid"),
 		ParentToolUseID: strVal(raw, "parent_tool_use_id"),
+		Origin:          parseOrigin(raw),
 	}
 	if tr, ok := raw["tool_use_result"].(map[string]any); ok {
 		m.ToolUseResult = tr
@@ -307,6 +340,8 @@ func parseResultMessage(raw map[string]any) (*ResultMessage, error) {
 		v := int(aes)
 		m.APIErrorStatus = &v
 	}
+	m.TerminalReason = strVal(raw, "terminal_reason")
+	m.Origin = parseOrigin(raw)
 	return m, nil
 }
 
@@ -472,17 +507,4 @@ func contentArr(m map[string]any, key string) []any {
 		return v
 	}
 	return nil
-}
-
-// parseMirrorErrorMessage constructs a MirrorErrorMessage directly from a raw dict.
-// Used by the batcher callback to inject mirror errors into the message stream.
-func parseMirrorErrorMessage(raw map[string]any) Message {
-	msg := &MirrorErrorMessage{
-		SystemMessage: SystemMessage{Subtype: "mirror_error", Data: raw},
-		Error:         strVal(raw, "error"),
-	}
-	if key, ok := raw["key"].(*SessionKey); ok {
-		msg.Key = key
-	}
-	return msg
 }

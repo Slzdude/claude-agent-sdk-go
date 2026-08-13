@@ -885,13 +885,13 @@ func TestAgentDefinition_NewFields(t *testing.T) {
 
 func TestParseTaskUpdatedMessage(t *testing.T) {
 	raw := map[string]any{
-		"type":      "system",
-		"subtype":   "task_updated",
-		"task_id":   "task-123",
+		"type":       "system",
+		"subtype":    "task_updated",
+		"task_id":    "task-123",
 		"session_id": "sess-456",
-		"uuid":      "uuid-789",
+		"uuid":       "uuid-789",
 		"patch": map[string]any{
-			"status":  "completed",
+			"status":   "completed",
 			"end_time": "2025-01-01T00:00:00Z",
 		},
 	}
@@ -1027,13 +1027,13 @@ func TestTaskUpdatedStatusConstants(t *testing.T) {
 
 func TestParseTaskUpdatedMessage_RoundTrip(t *testing.T) {
 	raw := map[string]any{
-		"type":      "system",
-		"subtype":   "task_updated",
-		"task_id":   "t1",
+		"type":       "system",
+		"subtype":    "task_updated",
+		"task_id":    "t1",
 		"session_id": "s1",
-		"uuid":      "u1",
+		"uuid":       "u1",
 		"patch": map[string]any{
-			"status":  "killed",
+			"status":   "killed",
 			"end_time": float64(1234567890),
 		},
 	}

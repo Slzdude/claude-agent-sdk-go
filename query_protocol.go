@@ -58,11 +58,24 @@ type queryProto struct {
 	// mirrorBatcher handles transcript_mirror frames from stdout.
 	mirrorBatcher *TranscriptMirrorBatcher
 
+	// inflightTasks tracks task IDs of started-but-not-finished tasks.
+	// A result frame only ends one turn, not the run: background tasks
+	// keep running past it and still need stdin for hook/SDK-MCP control
+	// responses.
+	inflightTasks map[string]bool
+
 	// rawOut is the output channel created in Run(). Stored here so
 	// ReportMirrorError can inject SDK-synthesized messages without
 	// needing the caller to pass the channel explicitly — matching
 	// Python's self._message_send.send_nowait() pattern.
 	rawOut chan map[string]any
+}
+
+// deferringTaskTypes are task types whose completion runs a follow-up turn,
+// and which therefore may need the control channel after the turn's result frame.
+var deferringTaskTypes = map[string]bool{
+	"local_agent":    true,
+	"local_workflow": true,
 }
 
 type controlResult struct {
@@ -100,6 +113,37 @@ func (q *queryProto) SetSkills(s any) {
 	q.skills = s
 }
 
+// trackTaskLifecycle tracks in-flight tasks from system task lifecycle frames.
+// task_started marks a task in flight; task_notification or task_updated with
+// a terminal status clears it. Only delegated agent work is tracked
+// (deferringTaskTypes). Matches Python's Query._track_task_lifecycle.
+func (q *queryProto) trackTaskLifecycle(msg map[string]any) {
+	subtype := strVal(msg, "subtype")
+	taskID := strVal(msg, "task_id")
+	if taskID == "" {
+		return
+	}
+	if q.inflightTasks == nil {
+		q.inflightTasks = make(map[string]bool)
+	}
+	switch subtype {
+	case "task_started":
+		taskType := strVal(msg, "task_type")
+		if deferringTaskTypes[taskType] {
+			q.inflightTasks[taskID] = true
+		}
+	case "task_notification":
+		delete(q.inflightTasks, taskID)
+	case "task_updated":
+		if patch, ok := msg["patch"].(map[string]any); ok {
+			status := strVal(patch, "status")
+			if IsTerminalTaskStatus(status) {
+				delete(q.inflightTasks, taskID)
+			}
+		}
+	}
+}
+
 // SetMirrorBatcher attaches a TranscriptMirrorBatcher that receives transcript_mirror frames.
 func (q *queryProto) SetMirrorBatcher(batcher *TranscriptMirrorBatcher) {
 	q.mirrorBatcher = batcher
@@ -124,7 +168,7 @@ func (q *queryProto) ReportMirrorError(key *SessionKey, errMsg string) {
 	if key != nil {
 		msg["session_id"] = key.SessionID
 	}
-	defer func() { recover() }() // guard against writing to closed channel
+	defer func() { _ = recover() }() // guard against writing to closed channel
 	select {
 	case q.rawOut <- msg:
 	default:
@@ -339,13 +383,22 @@ func (q *queryProto) Run(ctx context.Context) <-chan map[string]any {
 				if q.mirrorBatcher != nil {
 					q.mirrorBatcher.Flush()
 				}
-				q.firstResultOnce.Do(func() { close(q.firstResultCh) })
+				// Only close stdin when no tasks are in flight.
+				if len(q.inflightTasks) > 0 {
+					// One turn ended, but background tasks are still running.
+				} else {
+					q.firstResultOnce.Do(func() { close(q.firstResultCh) })
+				}
 				select {
 				case out <- raw:
 				case <-ctx.Done():
 					return
 				}
 			default:
+				// Track task lifecycle from system messages.
+				if strVal(raw, "type") == "system" {
+					q.trackTaskLifecycle(raw)
+				}
 				select {
 				case out <- raw:
 				case <-ctx.Done():

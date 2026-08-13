@@ -10,8 +10,8 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -60,19 +60,6 @@ func killActiveChildren() {
 			_ = cmd.Process.Signal(syscall.SIGTERM)
 		}
 	}
-}
-
-func init() {
-	// Register signal handler to kill active children on parent exit.
-	// This prevents orphaned claude processes when the parent crashes or exits
-	// without calling Close().
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-c
-		killActiveChildren()
-		os.Exit(1)
-	}()
 }
 
 // transport manages the raw subprocess I/O.
@@ -186,6 +173,9 @@ func (t *cliTransport) buildCommand() []string {
 		cmd = append(cmd, "--tools", "default")
 	}
 
+	// Validate skills parameter.
+	rejectNonListSkills(opts.Skills)
+
 	// Apply skills defaults: inject Skill tool and default setting_sources.
 	effectiveAllowedTools := append([]string{}, opts.AllowedTools...)
 	effectiveSettingSources := opts.SettingSources
@@ -199,6 +189,7 @@ func (t *cliTransport) buildCommand() []string {
 			}
 		case []string:
 			for _, name := range s {
+				validateSkillName(name)
 				pattern := "Skill(" + name + ")"
 				if !contains(effectiveAllowedTools, pattern) {
 					effectiveAllowedTools = append(effectiveAllowedTools, pattern)
@@ -248,13 +239,23 @@ func (t *cliTransport) buildCommand() []string {
 		cmd = append(cmd, "--continue")
 	}
 	if opts.Resume != "" {
+		rejectWindowsCmdMetacharacters("resume", opts.Resume)
 		cmd = append(cmd, "--resume="+opts.Resume)
 	}
 	if opts.SessionID != "" {
+		rejectWindowsCmdMetacharacters("session_id", opts.SessionID)
 		cmd = append(cmd, "--session-id="+opts.SessionID)
 	}
 	if opts.ForkSession {
 		cmd = append(cmd, "--fork-session")
+	}
+	if opts.ResumeSessionAt != "" {
+		rejectWindowsCmdMetacharacters("resume_session_at", opts.ResumeSessionAt)
+		cmd = append(cmd, "--resume-session-at="+opts.ResumeSessionAt)
+	}
+	if opts.ResumeDropsTurn != "" {
+		rejectWindowsCmdMetacharacters("resume_drops_turn", opts.ResumeDropsTurn)
+		cmd = append(cmd, "--resume-drops-turn="+opts.ResumeDropsTurn)
 	}
 	if sv := t.buildSettingsValue(); sv != "" {
 		cmd = append(cmd, "--settings", sv)
@@ -695,12 +696,69 @@ func contains(slice []string, s string) bool {
 	return false
 }
 
-func appendIfMissing(env []string, entry string) []string {
-	key := strings.SplitN(entry, "=", 2)[0] + "="
-	for _, e := range env {
-		if strings.HasPrefix(e, key) {
-			return env
+// cmdExeMetacharacters are characters unsafe on Windows command lines.
+const cmdExeMetacharacters = `&|<>^%!"` + "\r\n"
+
+// rejectWindowsCmdMetacharacters rejects resume/session_id values containing
+// Windows cmd.exe metacharacters. On non-Windows platforms this is a no-op.
+// Matches Python's _reject_windows_cmd_metacharacters.
+func rejectWindowsCmdMetacharacters(optionName, value string) {
+	if runtime.GOOS != "Windows" {
+		return
+	}
+	for _, c := range value {
+		if strings.ContainsRune(cmdExeMetacharacters, c) {
+			panic(fmt.Sprintf("%s value %q contains characters unsafe on Windows command line: %c", optionName, value, c))
 		}
 	}
-	return append(env, entry)
+}
+
+// rejectNonListSkills validates that skills is a list or "all".
+// Matches Python's _reject_non_list_skills.
+func rejectNonListSkills(skills any) {
+	if skills == nil {
+		return
+	}
+	if _, ok := skills.([]string); ok {
+		return
+	}
+	if s, ok := skills.(string); ok && s == "all" {
+		return
+	}
+	if s, ok := skills.(string); ok {
+		panic(fmt.Sprintf("ClaudeAgentOptions.skills must be a list of skill names or \"all\", got %q. Did you mean []string{%q}?", s, s))
+	}
+	panic(fmt.Sprintf("ClaudeAgentOptions.skills must be a list of skill names or \"all\", got %T", skills))
+}
+
+// skillNameInvalidChars matches characters not allowed in skill names.
+var skillNameInvalidChars = regexp.MustCompile(`[(),\x00-\x1f\x7f-\x9f\x{feff}]`)
+
+// validateSkillName validates a single skill name.
+// Matches Python's _validate_skill_name.
+func validateSkillName(name string) {
+	if name == "" {
+		panic("Skill names must be non-empty strings")
+	}
+	if name != strings.TrimSpace(name) {
+		panic(fmt.Sprintf("Invalid skill name %q: leading or trailing whitespace", name))
+	}
+	if skillNameInvalidChars.MatchString(name) {
+		panic(fmt.Sprintf("Invalid skill name %q: parentheses, commas, control characters are not allowed", name))
+	}
+	if name == "*" {
+		panic("Invalid skill name '*': use skills=\"all\" to enable every skill")
+	}
+	if strings.HasSuffix(name, ":*") || strings.HasSuffix(name, " *") {
+		panic(fmt.Sprintf("Invalid skill name %q: wildcard-suffix names are not allowed", name))
+	}
+	if strings.HasPrefix(name, "/") {
+		panic(fmt.Sprintf("Invalid skill name %q: skill names may not start with '/'", name))
+	}
+	if strings.Contains(name, "\\\\") {
+		panic(fmt.Sprintf("Invalid skill name %q: consecutive backslashes are not allowed", name))
+	}
+	if strings.HasSuffix(name, "\\") {
+		panic(fmt.Sprintf("Invalid skill name %q: names may not end with an unpaired backslash", name))
+	}
 }

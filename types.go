@@ -251,6 +251,7 @@ type UserMessage struct {
 	UUID            string         `json:"uuid,omitempty"`
 	ParentToolUseID string         `json:"parent_tool_use_id,omitempty"`
 	ToolUseResult   map[string]any `json:"tool_use_result,omitempty"`
+	Origin          *MessageOrigin `json:"origin,omitempty"` // Provenance of this message
 }
 
 func (m *UserMessage) messageType() string { return "user" }
@@ -392,12 +393,78 @@ func IsTerminalTaskStatus(status string) bool {
 // TaskUpdatedMessage with no accompanying TaskNotificationMessage.
 type TaskUpdatedMessage struct {
 	SystemMessage
-	TaskID    string              `json:"task_id"`
-	Patch     map[string]any      `json:"patch"`
-	Status    TaskUpdatedStatus   `json:"status,omitempty"`
-	SessionID string              `json:"session_id,omitempty"`
-	UUID      string              `json:"uuid,omitempty"`
+	TaskID    string            `json:"task_id"`
+	Patch     map[string]any    `json:"patch"`
+	Status    TaskUpdatedStatus `json:"status,omitempty"`
+	SessionID string            `json:"session_id,omitempty"`
+	UUID      string            `json:"uuid,omitempty"`
 }
+
+// MessageOriginKind enumerates known origin kinds for user-role messages.
+// Newer CLI versions may emit kinds not listed here; treat anything
+// unrecognized as "not human".
+type MessageOriginKind = string
+
+const (
+	OriginKindHuman            MessageOriginKind = "human"
+	OriginKindChannel          MessageOriginKind = "channel"
+	OriginKindPeer             MessageOriginKind = "peer"
+	OriginKindTaskNotification MessageOriginKind = "task-notification"
+	OriginKindCoordinator      MessageOriginKind = "coordinator"
+	OriginKindUnclassified     MessageOriginKind = "unclassified"
+	OriginKindObserver         MessageOriginKind = "observer"
+	OriginKindAutoContinuation MessageOriginKind = "auto-continuation"
+	OriginKindObserverActivity MessageOriginKind = "observer-activity"
+)
+
+// TaskNotificationOriginSubkind identifies special delivery modes for
+// kind=="task-notification" origins.
+type TaskNotificationOriginSubkind = string
+
+const (
+	OriginSubkindScheduledTrigger TaskNotificationOriginSubkind = "scheduled-trigger"
+	OriginSubkindPeerSendMessage  TaskNotificationOriginSubkind = "peer-send-message"
+)
+
+// MessageOrigin carries the provenance of a user-role message or of the
+// turn that produced a ResultMessage. Only Kind is always present; the
+// remaining fields depend on Kind.
+type MessageOrigin struct {
+	Kind            string                        `json:"kind"`                      // Required discriminator
+	Server          string                        `json:"server,omitempty"`          // kind=="channel": MCP server name
+	From            string                        `json:"from,omitempty"`            // kind=="peer"/"observer": sender address
+	Name            string                        `json:"name,omitempty"`            // kind=="peer": sender display name
+	FromSession     string                        `json:"fromSession,omitempty"`     // kind=="peer": sender's session id
+	SenderTaskID    string                        `json:"senderTaskId,omitempty"`    // kind=="peer"/"observer": in-process task id
+	Body            string                        `json:"body,omitempty"`            // kind=="peer": decoded message body
+	VerifiedPeerPID *int                          `json:"verifiedPeerPid,omitempty"` // kind=="peer": kernel-verified pid
+	Subkind         TaskNotificationOriginSubkind `json:"subkind,omitempty"`         // kind=="task-notification": delivery mode
+}
+
+// ModelUsage carries per-model token usage and cost breakdown.
+// Keys match the TypeScript SDK's ModelUsage shape (camelCase).
+type ModelUsage struct {
+	InputTokens              int     `json:"inputTokens"`
+	OutputTokens             int     `json:"outputTokens"`
+	CacheReadInputTokens     int     `json:"cacheReadInputTokens"`
+	CacheCreationInputTokens int     `json:"cacheCreationInputTokens"`
+	WebSearchRequests        int     `json:"webSearchRequests"`
+	CostUSD                  float64 `json:"costUSD"`
+	ContextWindow            int     `json:"contextWindow"`
+	MaxOutputTokens          int     `json:"maxOutputTokens"`
+	CanonicalModel           string  `json:"canonicalModel,omitempty"`
+	Provider                 string  `json:"provider,omitempty"`
+}
+
+// ConversationResetMessage is emitted when the session's conversation is
+// replaced without ending the connection (e.g. after /clear).
+type ConversationResetMessage struct {
+	NewConversationID string `json:"new_conversation_id"`
+	UUID              string `json:"uuid"`
+	SessionID         string `json:"session_id"`
+}
+
+func (m *ConversationResetMessage) messageType() string { return "conversation_reset" }
 
 // MirrorErrorMessage is emitted when a SessionStore.append call fails.
 type MirrorErrorMessage struct {
@@ -458,6 +525,10 @@ type ResultMessage struct {
 	// failing API call when IsError is true and Subtype is "success".
 	APIErrorStatus *int   `json:"api_error_status,omitempty"`
 	UUID           string `json:"uuid,omitempty"`
+	// TerminalReason indicates why the query loop terminated
+	// (e.g. "completed", "max_turns", "aborted_streaming", "aborted_tools").
+	TerminalReason string         `json:"terminal_reason,omitempty"`
+	Origin         *MessageOrigin `json:"origin,omitempty"` // Origin of the user message that triggered this turn
 }
 
 func (m *ResultMessage) messageType() string { return "result" }
@@ -845,6 +916,16 @@ type ClaudeAgentOptions struct {
 	// ForkSession forks the session on resume instead of continuing it.
 	// Use with Resume.
 	ForkSession bool
+
+	// ResumeSessionAt loads the conversation only up to and including
+	// the message with this UUID when resuming. Use with Resume and
+	// usually ForkSession to branch from an earlier point.
+	ResumeSessionAt string
+
+	// ResumeDropsTurn is the UUID of the user prompt whose turn this
+	// truncating resume intends to discard. When set, the CLI validates
+	// that every entry after ResumeSessionAt is attributable to that turn.
+	ResumeDropsTurn string
 
 	// Agents programmatically defines custom sub-agents invokable via the
 	// Agent tool. Keys are agent names, values are agent definitions.

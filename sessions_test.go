@@ -855,8 +855,7 @@ func TestStoreBackedSession(t *testing.T) {
 
 // testMemoryStore is a simple in-memory SessionStore for testing.
 type testMemoryStore struct {
-	data      map[string][]SessionStoreEntry
-	summaries map[string]SessionSummaryEntry
+	data map[string][]SessionStoreEntry
 }
 
 func (s *testMemoryStore) Append(key SessionKey, entries []SessionStoreEntry) error {
