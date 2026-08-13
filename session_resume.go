@@ -376,9 +376,13 @@ func materializeSubkeys(ctx context.Context, store SessionStore, tmpBase, projec
 
 		// Write transcript.
 		subFile := filepath.Join(sessionDir, subpath+".jsonl")
-		_ = os.MkdirAll(filepath.Dir(subFile), 0o700)
+		if err := os.MkdirAll(filepath.Dir(subFile), 0o700); err != nil {
+			continue
+		}
 		if len(transcript) > 0 {
-			_ = writeJSONL(subFile, transcript)
+			if err := writeJSONL(subFile, transcript); err != nil {
+				continue
+			}
 		}
 
 		// Write .meta.json sidecar (last metadata entry wins).
