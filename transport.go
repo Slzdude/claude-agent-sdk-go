@@ -23,7 +23,7 @@ import (
 const (
 	defaultMaxBufferSize     = 1024 * 1024
 	minimumClaudeCodeVersion = "2.0.0"
-	sdkVersion               = "0.2.137"
+	sdkVersion               = "0.2.149"
 )
 
 // Track live CLI subprocesses so we can terminate them when the parent process
@@ -149,9 +149,9 @@ func (t *cliTransport) buildCommand() []string {
 
 	switch sp := opts.SystemPrompt.(type) {
 	case nil:
-		// Don't pass --system-prompt when unset — let the CLI use its default
-		// system prompt which includes skill listings, memory, and other context.
-		// Passing --system-prompt "" overrides the default and strips skills.
+		// Match Python SDK: pass empty string to explicitly clear the default
+		// system prompt. This ensures consistent behavior across SDKs.
+		cmd = append(cmd, "--system-prompt", "")
 	case string:
 		cmd = append(cmd, "--system-prompt", sp)
 	case *SystemPromptPreset:
@@ -315,6 +315,11 @@ func (t *cliTransport) buildCommand() []string {
 	for flag, val := range opts.ExtraArgs {
 		if val == nil {
 			cmd = append(cmd, "--"+flag)
+		} else if strings.HasPrefix(*val, "-") {
+			// Use = form for dash-leading values to prevent flag injection.
+			// In two-token form, a dash-leading value could be parsed as a
+			// separate flag. The equals form always binds correctly.
+			cmd = append(cmd, "--"+flag+"="+*val)
 		} else {
 			cmd = append(cmd, "--"+flag, *val)
 		}

@@ -197,8 +197,12 @@ func parseSystemMessage(raw map[string]any) (Message, error) {
 			SystemMessage: SystemMessage{Subtype: subtype, Data: raw},
 			Error:         strVal(raw, "error"),
 		}
-		if key, ok := raw["key"].(*SessionKey); ok {
-			msg.Key = key
+		if keyMap, ok := raw["key"].(map[string]any); ok {
+			msg.Key = &SessionKey{
+				ProjectKey: strVal(keyMap, "project_key"),
+				SessionID:  strVal(keyMap, "session_id"),
+				Subpath:    strVal(keyMap, "subpath"),
+			}
 		}
 		return msg, nil
 	case "hook_started", "hook_response":

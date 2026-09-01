@@ -1150,6 +1150,7 @@ type SessionMessage struct {
 	SessionID       string         `json:"session_id"`
 	Message         map[string]any `json:"message"`
 	ParentToolUseID *string        `json:"parent_tool_use_id,omitempty"`
+	ParentAgentID   *string        `json:"parent_agent_id,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
