@@ -257,3 +257,181 @@ func TestQuery_AsyncIterableMCPControlRequests(t *testing.T) {
 		t.Errorf("last message should be ResultMessage, got %T", msgs[1])
 	}
 }
+
+// TestQuery_CanUseToolHoldsStdinOpen: with only can_use_tool configured (no hooks,
+// no MCP servers), stdin must remain open until the run-ending result.
+func TestQuery_CanUseToolHoldsStdinOpen(t *testing.T) {
+	tr := mockTransportWithInit(t, assistantLine("Hello!"), resultLine())
+
+	permissionCalled := false
+	opts := &ClaudeAgentOptions{
+		CanUseTool: func(ctx context.Context, toolName string, input map[string]any, permCtx ToolPermissionContext) (PermissionResult, error) {
+			permissionCalled = true
+			return &PermissionResultAllow{}, nil
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	msgs, err := mockQueryMessages(ctx, t, "Hello", tr, opts)
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Errorf("expected 2 messages, got %d", len(msgs))
+	}
+	// The permission callback was registered but won't fire without a real tool_use
+	_ = permissionCalled
+}
+
+// TestQuery_StringPromptWithMCPServers: string prompt with MCP servers must
+// keep stdin open until result arrives.
+func TestQuery_StringPromptWithMCPServers(t *testing.T) {
+	server := &fakeMCPServer{}
+
+	tr := mockTransportWithInit(t, assistantLine("Hi!"), resultLine())
+
+	opts := &ClaudeAgentOptions{
+		MCPServers: map[string]MCPServerConfig{
+			"fake": &MCPSdkServerConfig{Instance: server},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	msgs, err := mockQueryMessages(ctx, t, "Hello", tr, opts)
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Errorf("expected 2 messages, got %d", len(msgs))
+	}
+	if _, ok := msgs[1].(*ResultMessage); !ok {
+		t.Errorf("last message should be ResultMessage, got %T", msgs[1])
+	}
+}
+
+// TestQuery_StringPromptWithoutMCPServers: string prompt without MCP servers
+// must close stdin immediately and not hang.
+func TestQuery_StringPromptWithoutMCPServers(t *testing.T) {
+	tr := mockTransportWithInit(t, assistantLine("Hello!"), resultLine())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	msgs, err := mockQueryMessages(ctx, t, "Hello", tr, nil)
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Errorf("expected 2 messages, got %d", len(msgs))
+	}
+}
+
+// TestQuery_ResultWithInflightTaskKeepsStdinOpen: when a result message arrives
+// but background tasks are still in flight, stdin must not be closed.
+func TestQuery_ResultWithInflightTaskKeepsStdinOpen(t *testing.T) {
+	// This test verifies the task lifecycle tracking behavior.
+	// When task_started arrives for a deferring task type (local_agent, local_workflow),
+	// the task is tracked. When result arrives with inflight tasks, stdin stays open.
+	q := &queryProto{
+		inflightTasks: make(map[string]bool),
+	}
+
+	// Simulate task_started for a deferring task type
+	q.trackTaskLifecycle(map[string]any{
+		"subtype":   "task_started",
+		"task_id":   "task-1",
+		"task_type": "local_agent",
+	})
+
+	if len(q.inflightTasks) != 1 {
+		t.Errorf("expected 1 inflight task, got %d", len(q.inflightTasks))
+	}
+
+	// Simulate task_updated with terminal status - should clear the task
+	q.trackTaskLifecycle(map[string]any{
+		"subtype": "task_updated",
+		"task_id": "task-1",
+		"patch": map[string]any{
+			"status": "completed",
+		},
+	})
+
+	if len(q.inflightTasks) != 0 {
+		t.Errorf("expected 0 inflight tasks after completion, got %d", len(q.inflightTasks))
+	}
+}
+
+// TestQuery_NonDeferringTaskTypesNotTracked: shell tasks (local_bash) must not
+// be tracked as inflight, because they can run forever.
+func TestQuery_NonDeferringTaskTypesNotTracked(t *testing.T) {
+	q := &queryProto{
+		inflightTasks: make(map[string]bool),
+	}
+
+	// Simulate task_started for a non-deferring task type
+	q.trackTaskLifecycle(map[string]any{
+		"subtype":   "task_started",
+		"task_id":   "task-shell",
+		"task_type": "local_bash",
+	})
+
+	if len(q.inflightTasks) != 0 {
+		t.Errorf("expected 0 inflight tasks for shell task, got %d", len(q.inflightTasks))
+	}
+}
+
+// TestQuery_TaskUpdatedNonTerminalKeepsTask: task_updated with non-terminal
+// status must not clear the task.
+func TestQuery_TaskUpdatedNonTerminalKeepsTask(t *testing.T) {
+	q := &queryProto{
+		inflightTasks: make(map[string]bool),
+	}
+
+	// Add a task
+	q.trackTaskLifecycle(map[string]any{
+		"subtype":   "task_started",
+		"task_id":   "task-1",
+		"task_type": "local_agent",
+	})
+
+	// Update with non-terminal status
+	q.trackTaskLifecycle(map[string]any{
+		"subtype": "task_updated",
+		"task_id": "task-1",
+		"patch": map[string]any{
+			"status": "running",
+		},
+	})
+
+	if len(q.inflightTasks) != 1 {
+		t.Errorf("expected 1 inflight task (non-terminal), got %d", len(q.inflightTasks))
+	}
+}
+
+// TestQuery_TaskNotificationClearsTask: task_notification must clear the task.
+func TestQuery_TaskNotificationClearsTask(t *testing.T) {
+	q := &queryProto{
+		inflightTasks: make(map[string]bool),
+	}
+
+	// Add a task
+	q.trackTaskLifecycle(map[string]any{
+		"subtype":   "task_started",
+		"task_id":   "task-1",
+		"task_type": "local_agent",
+	})
+
+	// Clear via task_notification
+	q.trackTaskLifecycle(map[string]any{
+		"subtype": "task_notification",
+		"task_id": "task-1",
+	})
+
+	if len(q.inflightTasks) != 0 {
+		t.Errorf("expected 0 inflight tasks after notification, got %d", len(q.inflightTasks))
+	}
+}

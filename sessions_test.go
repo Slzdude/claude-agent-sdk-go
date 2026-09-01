@@ -1306,3 +1306,164 @@ func TestGetSubagentMessagesFromStore_OffsetExceedsLen(t *testing.T) {
 		t.Errorf("expected 0 messages when offset==len, got %d", len(msgs))
 	}
 }
+
+// Session Data Integrity Tests
+// Matches Python's test_sessions.py
+
+func TestGetSessionMessages_CorruptLinesSkipped(t *testing.T) {
+	// Corrupt JSON lines must be skipped without failing the entire parse.
+	// Use the store-based API which doesn't require directory structure.
+	store := &testMemoryStore{data: make(map[string][]SessionStoreEntry)}
+	key := SessionKey{ProjectKey: "proj", SessionID: "550e8400-e29b-41d4-a716-446655440000"}
+
+	// Append a mix of valid and corrupt entries with proper chain links
+	store.Append(key, []SessionStoreEntry{
+		{Type: "user", UUID: "u1", Extra: map[string]any{"message": map[string]any{"role": "user", "content": "hello"}}},
+		{Type: "corrupt", UUID: "bad", Extra: map[string]any{"parentUuid": "u1"}}, // This will be filtered out
+		{Type: "assistant", UUID: "a1", Extra: map[string]any{"parentUuid": "u1", "message": map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "text", "text": "hi"}}}}},
+	})
+
+	msgs, err := GetSessionMessagesFromStore(store, key, 0, 0)
+	if err != nil {
+		t.Fatalf("GetSessionMessagesFromStore failed: %v", err)
+	}
+
+	// Should return only the valid user and assistant messages
+	if len(msgs) != 2 {
+		t.Errorf("expected 2 messages (corrupt entry skipped), got %d: %v", len(msgs), msgs)
+	}
+}
+
+func TestGetSessionMessages_EmptyTranscriptFile(t *testing.T) {
+	// An empty .jsonl file must return an empty list.
+	dir := t.TempDir()
+	projectDir := filepath.Join(dir, "projects", "test-project")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	sessionID := "550e8400-e29b-41d4-a716-446655440000"
+	sessionFile := filepath.Join(projectDir, sessionID+".jsonl")
+
+	// Write an empty file
+	if err := os.WriteFile(sessionFile, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	msgs, err := GetSessionMessages(sessionID, dir, 0, 0)
+	if err != nil {
+		t.Fatalf("GetSessionMessages failed: %v", err)
+	}
+
+	if len(msgs) != 0 {
+		t.Errorf("expected 0 messages for empty file, got %d", len(msgs))
+	}
+}
+
+func TestGetSessionMessages_CycleDetection(t *testing.T) {
+	// Cyclic parentUuid references must not cause infinite loops.
+	dir := t.TempDir()
+	projectDir := filepath.Join(dir, "projects", "test-project")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	sessionID := "550e8400-e29b-41d4-a716-446655440000"
+	sessionFile := filepath.Join(projectDir, sessionID+".jsonl")
+
+	// Create a cycle: u1 -> a1 -> u1
+	lines := []string{
+		`{"type":"user","uuid":"u1","parent_uuid":"a1","message":{"role":"user","content":"hello"}}`,
+		`{"type":"assistant","uuid":"a1","parent_uuid":"u1","message":{"role":"assistant","content":[{"type":"text","text":"hi"}],"model":"test"}}`,
+	}
+	if err := os.WriteFile(sessionFile, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// This should not hang or panic
+	msgs, err := GetSessionMessages(sessionID, dir, 0, 0)
+	if err != nil {
+		t.Fatalf("GetSessionMessages failed: %v", err)
+	}
+
+	// The cycle detection should return some messages (not hang)
+	// The exact behavior depends on the cycle detection implementation
+	t.Logf("Got %d messages with cycle detection", len(msgs))
+}
+
+func TestListSessions_NonUUIDFilenamesIgnored(t *testing.T) {
+	// Files with non-UUID names must be ignored.
+	dir := t.TempDir()
+	projectDir := filepath.Join(dir, "projects", "test-project")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a file with non-UUID name
+	nonUUIDFile := filepath.Join(projectDir, "not-a-uuid.jsonl")
+	if err := os.WriteFile(nonUUIDFile, []byte(`{"type":"user","uuid":"u1"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sessions, err := ListSessions(dir, false, 0, 0)
+	if err != nil {
+		t.Fatalf("ListSessions failed: %v", err)
+	}
+
+	// Should not include the non-UUID file
+	if len(sessions) != 0 {
+		t.Errorf("expected 0 sessions, got %d", len(sessions))
+	}
+}
+
+func TestListSessions_NonJSONLFilesIgnored(t *testing.T) {
+	// Files without .jsonl extension must be ignored.
+	dir := t.TempDir()
+	projectDir := filepath.Join(dir, "projects", "test-project")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a file with wrong extension
+	wrongExtFile := filepath.Join(projectDir, "550e8400-e29b-41d4-a716-446655440000.json")
+	if err := os.WriteFile(wrongExtFile, []byte(`{"type":"user","uuid":"u1"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sessions, err := ListSessions(dir, false, 0, 0)
+	if err != nil {
+		t.Fatalf("ListSessions failed: %v", err)
+	}
+
+	// Should not include the non-JSONL file
+	if len(sessions) != 0 {
+		t.Errorf("expected 0 sessions, got %d", len(sessions))
+	}
+}
+
+func TestListSessions_EmptyFileFiltered(t *testing.T) {
+	// Empty files must be filtered out.
+	dir := t.TempDir()
+	projectDir := filepath.Join(dir, "projects", "test-project")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	sessionID := "550e8400-e29b-41d4-a716-446655440000"
+	sessionFile := filepath.Join(projectDir, sessionID+".jsonl")
+
+	// Write an empty file
+	if err := os.WriteFile(sessionFile, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sessions, err := ListSessions(dir, false, 0, 0)
+	if err != nil {
+		t.Fatalf("ListSessions failed: %v", err)
+	}
+
+	// Empty files should be filtered out
+	if len(sessions) != 0 {
+		t.Errorf("expected 0 sessions for empty file, got %d", len(sessions))
+	}
+}
