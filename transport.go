@@ -151,9 +151,9 @@ func (t *cliTransport) buildCommand() []string {
 
 	switch sp := opts.SystemPrompt.(type) {
 	case nil:
-		// Match Python SDK: pass empty string to explicitly clear the default
-		// system prompt. This ensures consistent behavior across SDKs.
-		cmd = append(cmd, "--system-prompt", "")
+		// Don't pass --system-prompt when unset — let the CLI use its default
+		// system prompt which includes skill listings, memory, and other context.
+		// Passing --system-prompt "" overrides the default and strips skills.
 	case string:
 		cmd = append(cmd, "--system-prompt", sp)
 	case *SystemPromptPreset:
@@ -718,7 +718,7 @@ const cmdExeMetacharacters = `&|<>^%!"` + "\r\n"
 // Windows cmd.exe metacharacters. On non-Windows platforms this is a no-op.
 // Matches Python's _reject_windows_cmd_metacharacters.
 func rejectWindowsCmdMetacharacters(optionName, value string) {
-	if runtime.GOOS != "Windows" {
+	if runtime.GOOS != "windows" {
 		return
 	}
 	for _, c := range value {

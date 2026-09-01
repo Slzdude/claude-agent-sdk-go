@@ -444,6 +444,12 @@ func (q *queryProto) Run(ctx context.Context) <-chan map[string]any {
 				// Track task lifecycle from system messages.
 				if strVal(raw, "type") == "system" {
 					q.trackTaskLifecycle(raw)
+					// After clearing inflight tasks, check if we can close firstResultCh.
+					// This handles the case where result arrived with inflight tasks,
+					// and now the last task has completed.
+					if len(q.inflightTasks) == 0 {
+						q.firstResultOnce.Do(func() { close(q.firstResultCh) })
+					}
 				}
 				select {
 				case out <- raw:
