@@ -471,10 +471,10 @@ func TestParseAssistantMessage_ModelAndError(t *testing.T) {
 	raw := map[string]any{
 		"type":               "assistant",
 		"parent_tool_use_id": "toolu_abc",
+		"error":              "rate_limit_error", // error is at top level (matches Python SDK)
 		"message": map[string]any{
 			"role":  "assistant",
 			"model": "claude-opus-4",
-			"error": "rate_limit_error",
 			"content": []any{
 				map[string]any{"type": "text", "text": "Sorry"},
 			},

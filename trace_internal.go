@@ -662,19 +662,23 @@ func extractResultMessageAttrs(span trace.Span, msg *ResultMessage) {
 	if msg.TotalCostUSD != nil && *msg.TotalCostUSD > 0 {
 		span.SetAttributes(attribute.Float64(semconv.LLMCostTotal, *msg.TotalCostUSD))
 	}
-	if msg.Result != "" {
-		span.SetAttributes(
-			attribute.String(semconv.OutputValue, msg.Result),
-			attribute.String(semconv.OutputMimeType, semconv.MimeTypeText),
-			attribute.String("gen_ai.completion", msg.Result),
-		)
+	if msg.Result != nil {
+		if resultStr, ok := msg.Result.(string); ok && resultStr != "" {
+			span.SetAttributes(
+				attribute.String(semconv.OutputValue, resultStr),
+				attribute.String(semconv.OutputMimeType, semconv.MimeTypeText),
+				attribute.String("gen_ai.completion", resultStr),
+			)
+		}
 	}
 	if msg.Subtype == "success" {
 		span.SetStatus(codes.Ok, "")
 	} else if msg.Subtype == "error" || msg.IsError {
 		errMsg := "agent error"
 		if len(msg.Errors) > 0 {
-			errMsg = msg.Errors[0]
+			if e, ok := msg.Errors[0].(string); ok {
+				errMsg = e
+			}
 		}
 		span.SetStatus(codes.Error, errMsg)
 	}

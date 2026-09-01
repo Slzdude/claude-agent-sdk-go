@@ -145,6 +145,8 @@ func (t *cliTransport) findBundledCLI() string {
 
 func (t *cliTransport) buildCommand() []string {
 	opts := t.opts
+	// Reject .bat/.cmd CLI paths on Windows to prevent cmd.exe injection attacks.
+	rejectWindowsBatchCLI(t.cliPath)
 	cmd := []string{t.cliPath, "--output-format", "stream-json", "--verbose"}
 
 	switch sp := opts.SystemPrompt.(type) {
@@ -257,9 +259,8 @@ func (t *cliTransport) buildCommand() []string {
 		rejectWindowsCmdMetacharacters("resume_drops_turn", opts.ResumeDropsTurn)
 		cmd = append(cmd, "--resume-drops-turn="+opts.ResumeDropsTurn)
 	}
-	if opts.ForwardSubagentText {
-		cmd = append(cmd, "--forward-subagent-text")
-	}
+	// Note: ForwardSubagentText is only sent in the initialize request,
+	// not as a CLI flag (matches Python SDK behavior).
 	if sv := t.buildSettingsValue(); sv != "" {
 		cmd = append(cmd, "--settings", sv)
 	}
@@ -775,4 +776,47 @@ func validateSkillName(name string) {
 	if strings.HasSuffix(name, "\\") {
 		panic(fmt.Sprintf("Invalid skill name %q: names may not end with an unpaired backslash", name))
 	}
+}
+
+// isWindowsBatchCLI returns true if cliPath is a .bat/.cmd batch script on Windows.
+// Always returns false on non-Windows platforms.
+// Matches Python's _is_windows_batch_cli.
+func isWindowsBatchCLI(cliPath string) bool {
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	// Check every path component for batch extensions.
+	// This prevents bypasses via paths like "claude.cmd\...\.."
+	// or NTFS stream specs like "claude.cmd:stream".
+	for _, component := range strings.Split(strings.ReplaceAll(cliPath, "\\", "/"), "/") {
+		for _, segment := range strings.Split(component, ":") {
+			trimmed := strings.TrimRight(segment, ". ")
+			lower := strings.ToLower(trimmed)
+			if strings.HasSuffix(lower, ".bat") || strings.HasSuffix(lower, ".cmd") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// rejectWindowsBatchCLI refuses to execute a .bat/.cmd script as the CLI on Windows.
+// Windows has no shebang mechanism: CreateProcess runs batch scripts by silently
+// rewriting the spawn into a 'cmd.exe /c' invocation, and cmd.exe re-parses the
+// whole command line at execution time. This prevents cmd.exe injection attacks
+// (CVE-2024-27980 "BatBadBut").
+// Matches Python's _reject_windows_batch_cli.
+func rejectWindowsBatchCLI(cliPath string) {
+	if !isWindowsBatchCLI(cliPath) {
+		return
+	}
+	panic(fmt.Sprintf(
+		"Refusing to execute batch script %q: Windows runs .bat/.cmd files via "+
+			"cmd.exe, which can execute commands injected through CLI arguments, "+
+			"and no reliable escaping for cmd.exe exists. Use a native claude "+
+			"executable instead: install Claude Code natively "+
+			"(irm https://claude.ai/install.ps1 | iex), point "+
+			"ClaudeAgentOptions.CliPath at a claude.exe, or install "+
+			"the claude-agent-sdk wheel for a platform that bundles claude.exe.",
+		cliPath))
 }

@@ -440,6 +440,7 @@ type MessageOrigin struct {
 	Body            string                        `json:"body,omitempty"`            // kind=="peer": decoded message body
 	VerifiedPeerPID *int                          `json:"verifiedPeerPid,omitempty"` // kind=="peer": kernel-verified pid
 	Subkind         TaskNotificationOriginSubkind `json:"subkind,omitempty"`         // kind=="task-notification": delivery mode
+	Data            map[string]any                `json:"-"`                         // Raw data for forward compatibility
 }
 
 // ModelUsage carries per-model token usage and cost breakdown.
@@ -516,12 +517,12 @@ type ResultMessage struct {
 	StopReason        string           `json:"stop_reason,omitempty"`
 	TotalCostUSD      *float64         `json:"total_cost_usd,omitempty"`
 	Usage             map[string]any   `json:"usage,omitempty"`
-	Result            string           `json:"result,omitempty"`
+	Result            any              `json:"result,omitempty"`
 	StructuredOutput  any              `json:"structured_output,omitempty"`
 	ModelUsage        map[string]any   `json:"model_usage,omitempty"`
 	PermissionDenials []any            `json:"permission_denials,omitempty"`
 	DeferredToolUse   *DeferredToolUse `json:"deferred_tool_use,omitempty"`
-	Errors            []string         `json:"errors,omitempty"`
+	Errors            []any           `json:"errors,omitempty"`
 	// APIErrorStatus is the HTTP status code (e.g. 429, 500, 529) of the
 	// failing API call when IsError is true and Subtype is "success".
 	APIErrorStatus *int   `json:"api_error_status,omitempty"`

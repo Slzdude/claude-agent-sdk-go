@@ -3,7 +3,7 @@ package claude
 import "fmt"
 
 // parseOrigin returns data["origin"] if it is a well-formed origin object.
-// Passed through as-is (including keys this SDK version doesn't model).
+// Preserves all keys from the CLI for forward compatibility.
 func parseOrigin(data map[string]any) *MessageOrigin {
 	origin, ok := data["origin"].(map[string]any)
 	if !ok {
@@ -13,7 +13,10 @@ func parseOrigin(data map[string]any) *MessageOrigin {
 	if kind == "" {
 		return nil
 	}
-	o := &MessageOrigin{Kind: kind}
+	o := &MessageOrigin{
+		Kind: kind,
+		Data: origin, // Preserve all keys for forward compatibility
+	}
 	o.Server = strVal(origin, "server")
 	o.From = strVal(origin, "from")
 	o.Name = strVal(origin, "name")
@@ -258,6 +261,10 @@ func parseAssistantMessage(raw map[string]any) (*AssistantMessage, error) {
 		SessionID:       strVal(raw, "session_id"),
 		UUID:            strVal(raw, "uuid"),
 	}
+	// Read error from top-level (matches Python SDK behavior)
+	if e := strVal(raw, "error"); e != "" {
+		m.Error = AssistantMessageErrorType(e)
+	}
 	if msg, ok := raw["message"].(map[string]any); ok {
 		rawContent := msg["content"]
 		if rawContent == nil {
@@ -276,9 +283,6 @@ func parseAssistantMessage(raw map[string]any) (*AssistantMessage, error) {
 		m.Model = strVal(msg, "model")
 		m.MessageID = strVal(msg, "id")
 		m.StopReason = strVal(msg, "stop_reason")
-		if e := strVal(msg, "error"); e != "" {
-			m.Error = AssistantMessageErrorType(e)
-		}
 		if u, ok := msg["usage"].(map[string]any); ok {
 			m.Usage = u
 		}
@@ -294,9 +298,9 @@ func parseResultMessage(raw map[string]any) (*ResultMessage, error) {
 		StopReason: strVal(raw, "stop_reason"),
 		UUID:       strVal(raw, "uuid"),
 	}
-	switch cv := raw["result"].(type) {
-	case string:
-		m.Result = cv
+	// Pass through any type for result (matches Python SDK behavior)
+	if r, ok := raw["result"]; ok {
+		m.Result = r
 	}
 	if d, ok := raw["duration_ms"].(float64); ok {
 		m.DurationMs = int(d)
@@ -323,12 +327,7 @@ func parseResultMessage(raw map[string]any) (*ResultMessage, error) {
 		m.PermissionDenials = pd
 	}
 	if errs, ok := raw["errors"].([]any); ok {
-		m.Errors = make([]string, 0, len(errs))
-		for _, e := range errs {
-			if s, ok := e.(string); ok {
-				m.Errors = append(m.Errors, s)
-			}
-		}
+		m.Errors = errs
 	}
 	if dt, ok := raw["deferred_tool_use"].(map[string]any); ok {
 		var input map[string]any

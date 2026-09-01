@@ -47,19 +47,17 @@ func TestParseUserMessage_NoParentAgentID(t *testing.T) {
 }
 
 func TestBuildCommand_ForwardSubagentText(t *testing.T) {
+	// ForwardSubagentText is only sent in the initialize request,
+	// not as a CLI flag (matches Python SDK behavior).
 	opts := &ClaudeAgentOptions{
 		ForwardSubagentText: true,
 	}
 	tr := &cliTransport{opts: opts, cliPath: "claude"}
 	cmd := tr.buildCommand()
-	found := false
 	for _, arg := range cmd {
 		if arg == "--forward-subagent-text" {
-			found = true
+			t.Error("--forward-subagent-text should not be in command (only in initialize request)")
 		}
-	}
-	if !found {
-		t.Error("expected --forward-subagent-text in command")
 	}
 }
 
@@ -71,7 +69,7 @@ func TestBuildCommand_ForwardSubagentText_False(t *testing.T) {
 	cmd := tr.buildCommand()
 	for _, arg := range cmd {
 		if arg == "--forward-subagent-text" {
-			t.Error("--forward-subagent-text should not be in command when false")
+			t.Error("--forward-subagent-text should not be in command")
 		}
 	}
 }
