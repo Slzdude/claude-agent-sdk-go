@@ -31,6 +31,19 @@ func (s *simpleServer) Version() string { return s.version }
 func (s *simpleServer) ListTools(_ context.Context) ([]claude.MCPTool, error) {
 	return s.tools, nil
 }
+func (s *simpleServer) ListResources(_ context.Context) ([]claude.MCPResource, error) {
+	return nil, nil
+}
+func (s *simpleServer) ReadResource(_ context.Context, _ string) (claude.MCPResourceContent, error) {
+	return claude.MCPResourceContent{}, nil
+}
+func (s *simpleServer) ListPrompts(_ context.Context) ([]claude.MCPPrompt, error) {
+	return nil, nil
+}
+func (s *simpleServer) GetPrompt(_ context.Context, _ string, _ map[string]any) (claude.MCPPromptResult, error) {
+	return claude.MCPPromptResult{}, nil
+}
+
 func (s *simpleServer) CallTool(ctx context.Context, name string, args map[string]any) (claude.ToolResult, error) {
 	s.execMu.Lock()
 	s.execLog = append(s.execLog, name)

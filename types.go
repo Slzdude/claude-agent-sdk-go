@@ -250,6 +250,7 @@ type UserMessage struct {
 	Content         any            `json:"content"`
 	UUID            string         `json:"uuid,omitempty"`
 	ParentToolUseID string         `json:"parent_tool_use_id,omitempty"`
+	ParentAgentID   string         `json:"parent_agent_id,omitempty"`
 	ToolUseResult   map[string]any `json:"tool_use_result,omitempty"`
 	Origin          *MessageOrigin `json:"origin,omitempty"` // Provenance of this message
 }
@@ -926,6 +927,12 @@ type ClaudeAgentOptions struct {
 	// truncating resume intends to discard. When set, the CLI validates
 	// that every entry after ResumeSessionAt is attributable to that turn.
 	ResumeDropsTurn string
+
+	// ForwardSubagentText when true forwards subagent text and thinking
+	// blocks in the message stream (normally only tool_use/tool_result
+	// blocks from subagents are emitted). Matches the TypeScript SDK's
+	// forwardSubagentText.
+	ForwardSubagentText bool
 
 	// Agents programmatically defines custom sub-agents invokable via the
 	// Agent tool. Keys are agent names, values are agent definitions.

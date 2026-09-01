@@ -257,6 +257,9 @@ func (t *cliTransport) buildCommand() []string {
 		rejectWindowsCmdMetacharacters("resume_drops_turn", opts.ResumeDropsTurn)
 		cmd = append(cmd, "--resume-drops-turn="+opts.ResumeDropsTurn)
 	}
+	if opts.ForwardSubagentText {
+		cmd = append(cmd, "--forward-subagent-text")
+	}
 	if sv := t.buildSettingsValue(); sv != "" {
 		cmd = append(cmd, "--settings", sv)
 	}
@@ -650,6 +653,12 @@ func (t *cliTransport) setErr(err error) {
 	if t.err == nil {
 		t.err = err
 	}
+}
+
+func (t *cliTransport) getErr() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.err
 }
 
 func (t *cliTransport) checkVersion() {

@@ -47,6 +47,19 @@ func (s *CalculatorServer) ListTools(_ context.Context) ([]claude.MCPTool, error
 	}, nil
 }
 
+func (s *CalculatorServer) ListResources(_ context.Context) ([]claude.MCPResource, error) {
+	return nil, nil
+}
+func (s *CalculatorServer) ReadResource(_ context.Context, _ string) (claude.MCPResourceContent, error) {
+	return claude.MCPResourceContent{}, nil
+}
+func (s *CalculatorServer) ListPrompts(_ context.Context) ([]claude.MCPPrompt, error) {
+	return nil, nil
+}
+func (s *CalculatorServer) GetPrompt(_ context.Context, _ string, _ map[string]any) (claude.MCPPromptResult, error) {
+	return claude.MCPPromptResult{}, nil
+}
+
 func (s *CalculatorServer) CallTool(_ context.Context, name string, args map[string]any) (claude.ToolResult, error) {
 	text := func(msg string) claude.ToolResult {
 		return claude.ToolResult{Content: []map[string]any{{"type": "text", "text": msg}}}

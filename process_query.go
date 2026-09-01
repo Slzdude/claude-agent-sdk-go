@@ -105,6 +105,9 @@ func processQuery(
 	if configuredOpts.Skills != nil {
 		q.SetSkills(configuredOpts.Skills)
 	}
+	if configuredOpts.ForwardSubagentText {
+		q.SetForwardSubagentText(true)
+	}
 	out := make(chan Message, 64)
 
 	// Attach transcript mirror batcher if session store is configured.
@@ -197,7 +200,20 @@ func processQuery(
 			}()
 
 			outputMsgIndex := 0
+			var lastErrorResult map[string]any
 			for raw := range rawCh {
+				// Track error results (same logic as non-traced path).
+				if strVal(raw, "type") == "result" {
+					if boolVal(raw, "is_error") {
+						lastErrorResult = raw
+					} else {
+						lastErrorResult = nil
+					}
+				} else if strVal(raw, "type") == "system" {
+					if strVal(raw, "subtype") != "session_state_changed" {
+						lastErrorResult = nil
+					}
+				}
 				msg, err := parseMessage(raw)
 				if err != nil || msg == nil {
 					continue
@@ -209,6 +225,13 @@ func processQuery(
 					return
 				}
 			}
+			if lastErrorResult != nil {
+				if transportErr := t.getErr(); transportErr != nil {
+					text := errorResultText(lastErrorResult)
+					slog.Debug("ProcessError after error result (already surfaced via ResultMessage)",
+						"error", text, "transport_err", transportErr)
+				}
+			}
 		}()
 	} else {
 		// Non-traced path: simple passthrough.
@@ -216,7 +239,21 @@ func processQuery(
 			defer close(out)
 			defer func() { _ = t.close() }()
 
+			var lastErrorResult map[string]any
 			for raw := range rawCh {
+				// Track error results for potential ProcessError → ResultError
+				// conversion (matches Python SDK's _last_error_result tracking).
+				if strVal(raw, "type") == "result" {
+					if boolVal(raw, "is_error") {
+						lastErrorResult = raw
+					} else {
+						lastErrorResult = nil
+					}
+				} else if strVal(raw, "type") == "system" {
+					if strVal(raw, "subtype") != "session_state_changed" {
+						lastErrorResult = nil
+					}
+				}
 				msg, err := parseMessage(raw)
 				if err != nil || msg == nil {
 					continue
@@ -225,6 +262,14 @@ func processQuery(
 				case out <- msg:
 				case <-ctx.Done():
 					return
+				}
+			}
+			// Log if we had an error result and the transport also errored.
+			if lastErrorResult != nil {
+				if transportErr := t.getErr(); transportErr != nil {
+					text := errorResultText(lastErrorResult)
+					slog.Debug("ProcessError after error result (already surfaced via ResultMessage)",
+						"error", text, "transport_err", transportErr)
 				}
 			}
 		}()

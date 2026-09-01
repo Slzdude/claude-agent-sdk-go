@@ -56,6 +56,14 @@ type SdkMcpServer interface {
 	ListTools(ctx context.Context) ([]MCPTool, error)
 	// CallTool executes a named tool with the given arguments.
 	CallTool(ctx context.Context, name string, arguments map[string]any) (ToolResult, error)
+	// ListResources returns the list of resources. Return nil to indicate no resources.
+	ListResources(ctx context.Context) ([]MCPResource, error)
+	// ReadResource reads a resource by URI. Return error for unsupported URIs.
+	ReadResource(ctx context.Context, uri string) (MCPResourceContent, error)
+	// ListPrompts returns the list of prompts. Return nil to indicate no prompts.
+	ListPrompts(ctx context.Context) ([]MCPPrompt, error)
+	// GetPrompt gets a prompt by name with arguments. Return error for unknown prompts.
+	GetPrompt(ctx context.Context, name string, arguments map[string]any) (MCPPromptResult, error)
 }
 
 // MCPTool describes a single tool exposed by an MCP server.
@@ -75,6 +83,49 @@ type ToolAnnotations struct {
 	IdempotentHint     *bool `json:"idempotentHint,omitempty"`
 	OpenWorldHint      *bool `json:"openWorldHint,omitempty"`
 	MaxResultSizeChars *int  `json:"maxResultSizeChars,omitempty"`
+}
+
+// MCPResource describes a resource exposed by an MCP server.
+type MCPResource struct {
+	URI         string `json:"uri"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	MimeType    string `json:"mimeType,omitempty"`
+}
+
+// MCPResourceContent is the content of a resource read from an MCP server.
+type MCPResourceContent struct {
+	URI      string `json:"uri"`
+	MimeType string `json:"mimeType,omitempty"`
+	Text     string `json:"text,omitempty"`
+	Blob     string `json:"blob,omitempty"`
+}
+
+// MCPPrompt describes a prompt exposed by an MCP server.
+type MCPPrompt struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	Arguments   []MCPPromptArg `json:"arguments,omitempty"`
+}
+
+// MCPPromptArg describes an argument to an MCP prompt.
+type MCPPromptArg struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Required    bool   `json:"required,omitempty"`
+}
+
+// MCPPromptResult is the result of getting a prompt from an MCP server.
+type MCPPromptResult struct {
+	Description string                   `json:"description,omitempty"`
+	Messages    []MCPPromptResultMessage `json:"messages"`
+}
+
+// MCPPromptResultMessage is a single message in a prompt result.
+// Content can be a string or a structured object per MCP spec.
+type MCPPromptResultMessage struct {
+	Role    string `json:"role"`
+	Content any    `json:"content"` // string or map[string]any
 }
 
 // McpServerConnectionStatus enumerates MCP server connection states.

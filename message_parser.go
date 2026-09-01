@@ -227,6 +227,7 @@ func parseUserMessage(raw map[string]any) (*UserMessage, error) {
 	m := &UserMessage{
 		UUID:            strVal(raw, "uuid"),
 		ParentToolUseID: strVal(raw, "parent_tool_use_id"),
+		ParentAgentID:   strVal(raw, "parent_agent_id"),
 		Origin:          parseOrigin(raw),
 	}
 	if tr, ok := raw["tool_use_result"].(map[string]any); ok {

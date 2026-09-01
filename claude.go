@@ -154,6 +154,9 @@ func NewClaudeSDKClient(ctx context.Context, opts *ClaudeAgentOptions) (*ClaudeS
 	if configuredOpts.Skills != nil {
 		q.SetSkills(configuredOpts.Skills)
 	}
+	if configuredOpts.ForwardSubagentText {
+		q.SetForwardSubagentText(true)
+	}
 
 	// Attach transcript mirror batcher if session store is configured.
 	if configuredOpts.SessionStore != nil {

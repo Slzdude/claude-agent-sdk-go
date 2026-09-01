@@ -64,6 +64,16 @@ type queryProto struct {
 	// responses.
 	inflightTasks map[string]bool
 
+	// forwardSubagentText when true sends forwardSubagentText=true in
+	// the initialize request so the CLI forwards subagent text/thinking
+	// blocks (not just tool_use/tool_result).
+	forwardSubagentText bool
+
+	// mcpInflight tracks in-flight MCP requests for cancellation support.
+	// Maps request ID → cancel function.
+	mcpInflightMu sync.Mutex
+	mcpInflight   map[string]context.CancelFunc
+
 	// rawOut is the output channel created in Run(). Stored here so
 	// ReportMirrorError can inject SDK-synthesized messages without
 	// needing the caller to pass the channel explicitly — matching
@@ -111,6 +121,39 @@ func (q *queryProto) SetExcludeDynamicSections(v *bool) {
 
 func (q *queryProto) SetSkills(s any) {
 	q.skills = s
+}
+
+// SetForwardSubagentText enables forwarding of subagent text/thinking blocks.
+func (q *queryProto) SetForwardSubagentText(v bool) {
+	q.forwardSubagentText = v
+}
+
+// cancelInflightMCPRequest cancels an in-flight MCP request by request ID.
+func (q *queryProto) cancelInflightMCPRequest(requestID string) {
+	q.mcpInflightMu.Lock()
+	cancel, ok := q.mcpInflight[requestID]
+	delete(q.mcpInflight, requestID)
+	q.mcpInflightMu.Unlock()
+	if ok {
+		cancel()
+	}
+}
+
+// registerInflightMCPRequest registers a cancel function for an in-flight MCP request.
+func (q *queryProto) registerInflightMCPRequest(requestID string, cancel context.CancelFunc) {
+	q.mcpInflightMu.Lock()
+	if q.mcpInflight == nil {
+		q.mcpInflight = make(map[string]context.CancelFunc)
+	}
+	q.mcpInflight[requestID] = cancel
+	q.mcpInflightMu.Unlock()
+}
+
+// unregisterInflightMCPRequest removes an in-flight MCP request.
+func (q *queryProto) unregisterInflightMCPRequest(requestID string) {
+	q.mcpInflightMu.Lock()
+	delete(q.mcpInflight, requestID)
+	q.mcpInflightMu.Unlock()
 }
 
 // trackTaskLifecycle tracks in-flight tasks from system task lifecycle frames.
@@ -253,6 +296,9 @@ func (q *queryProto) Initialize(ctx context.Context) (map[string]any, error) {
 	// 'all' and omitted are equivalent (no filter), so only send when explicit list.
 	if skills, ok := q.skills.([]string); ok {
 		reqPayload["skills"] = skills
+	}
+	if q.forwardSubagentText {
+		reqPayload["forwardSubagentText"] = true
 	}
 
 	resp, err := q.SendControlRequest(ctx, reqPayload, initializeTimeout())
@@ -628,7 +674,20 @@ func (q *queryProto) handleMCPMessage(ctx context.Context, req map[string]any) (
 	}
 
 	method := strVal(msgRaw, "method")
-	msgID := msgRaw["id"]
+	msgID := msgRaw["id"] // any type: string or number (JSON-RPC allows both)
+
+	// Create a cancellable context for this request (for notifications/cancelled support).
+	// Only register for requests (have an id), not notifications.
+	msgIDStr := fmt.Sprintf("%v", msgID)
+	if msgID != nil {
+		reqCtx, cancel := context.WithCancel(ctx)
+		q.registerInflightMCPRequest(msgIDStr, cancel)
+		defer func() {
+			q.unregisterInflightMCPRequest(msgIDStr)
+			cancel()
+		}()
+		ctx = reqCtx
+	}
 
 	buildResponse := func(result map[string]any) map[string]any {
 		return map[string]any{
@@ -656,7 +715,11 @@ func (q *queryProto) handleMCPMessage(ctx context.Context, req map[string]any) (
 	case "initialize":
 		return buildResponse(map[string]any{
 			"protocolVersion": "2024-11-05",
-			"capabilities":    map[string]any{"tools": map[string]any{}},
+			"capabilities": map[string]any{
+				"tools":     map[string]any{},
+				"resources": map[string]any{},
+				"prompts":   map[string]any{},
+			},
 			"serverInfo": map[string]any{
 				"name":    serverName,
 				"version": "1.0.0",
@@ -707,6 +770,73 @@ func (q *queryProto) handleMCPMessage(ctx context.Context, req map[string]any) (
 		var resultMap map[string]any
 		_ = json.Unmarshal(b, &resultMap)
 		return buildResponse(resultMap), nil
+
+	case "resources/list":
+		resources, err := server.ListResources(ctx)
+		if err != nil {
+			return buildError(-32603, err.Error()), nil
+		}
+		b, _ := json.Marshal(map[string]any{"resources": resources})
+		var result map[string]any
+		_ = json.Unmarshal(b, &result)
+		return buildResponse(result), nil
+
+	case "resources/read":
+		var params map[string]any
+		if p, ok := msgRaw["params"].(map[string]any); ok {
+			params = p
+		}
+		uri := strVal(params, "uri")
+		content, err := server.ReadResource(ctx, uri)
+		if err != nil {
+			return buildError(-32603, err.Error()), nil
+		}
+		b, _ := json.Marshal(map[string]any{"contents": []any{content}})
+		var result map[string]any
+		_ = json.Unmarshal(b, &result)
+		return buildResponse(result), nil
+
+	case "prompts/list":
+		prompts, err := server.ListPrompts(ctx)
+		if err != nil {
+			return buildError(-32603, err.Error()), nil
+		}
+		b, _ := json.Marshal(map[string]any{"prompts": prompts})
+		var result map[string]any
+		_ = json.Unmarshal(b, &result)
+		return buildResponse(result), nil
+
+	case "prompts/get":
+		var params map[string]any
+		if p, ok := msgRaw["params"].(map[string]any); ok {
+			params = p
+		}
+		promptName := strVal(params, "name")
+		var promptArgs map[string]any
+		if a, ok := params["arguments"].(map[string]any); ok {
+			promptArgs = a
+		}
+		promptResult, err := server.GetPrompt(ctx, promptName, promptArgs)
+		if err != nil {
+			return buildError(-32603, err.Error()), nil
+		}
+		b, _ := json.Marshal(promptResult)
+		var result map[string]any
+		_ = json.Unmarshal(b, &result)
+		return buildResponse(result), nil
+
+	case "ping":
+		return buildResponse(map[string]any{}), nil
+
+	case "notifications/cancelled":
+		// Cancel an in-flight request. No response needed (notification).
+		if params, ok := msgRaw["params"].(map[string]any); ok {
+			reqID := params["requestId"]
+			if reqID != nil {
+				q.cancelInflightMCPRequest(fmt.Sprintf("%v", reqID))
+			}
+		}
+		return nil, nil
 
 	default:
 		return buildError(-32601, "method not found: "+method), nil

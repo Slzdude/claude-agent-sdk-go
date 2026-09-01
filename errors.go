@@ -1,7 +1,10 @@
 // Package claude provides a Go SDK for Claude Code CLI.
 package claude
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // ClaudeSDKError is the base interface for all SDK errors.
 type ClaudeSDKError interface {
@@ -87,3 +90,104 @@ type MessageParseError struct {
 
 func (e *MessageParseError) Error() string { return e.Message }
 func (e *MessageParseError) sdkError()     {}
+
+// normalizeResultErrors extracts string errors from a raw CLI errors field.
+// The CLI emits a list of strings; tolerates a bare string and drops
+// non-string or blank entries.
+func normalizeResultErrors(raw any) []string {
+	switch v := raw.(type) {
+	case string:
+		v = strings.TrimSpace(v)
+		if v != "" {
+			return []string{v}
+		}
+		return nil
+	case []any:
+		var out []string
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				s = strings.TrimSpace(s)
+				if s != "" {
+					out = append(out, s)
+				}
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// ResultError is returned when the CLI ends a failed run by emitting a result
+// message with is_error=true and then exiting non-zero. It replaces the bare
+// "exit code 1" ProcessError and carries the result's structured payload so
+// callers can branch on why the run failed.
+//
+// It embeds ProcessError, so existing `errors.As(err, &processErr)` handlers
+// keep working.
+type ResultError struct {
+	ProcessError
+	Subtype        string         // e.g. "error_max_turns", "error_during_execution", "success"
+	Errors         []string       // Error strings reported by the CLI
+	Result         string         // Result text (for API failures: "API Error: ...")
+	APIErrorStatus *int           // HTTP status of failing API call, if any
+	TerminalReason string         // Why the run ended (e.g. "api_error", "max_turns")
+	SessionID      string         // Session the result belongs to
+	Data           map[string]any // Raw result message payload
+}
+
+func (e *ResultError) sdkError()  {}
+func (e *ResultError) Unwrap() error { return &e.ProcessError }
+
+// NewResultError creates a ResultError from a raw result message payload.
+func NewResultError(message string, data map[string]any, exitCode int) *ResultError {
+	if data == nil {
+		data = map[string]any{}
+	}
+	err := &ResultError{
+		ProcessError: ProcessError{
+			Message:  message,
+			ExitCode: exitCode,
+		},
+		Subtype:        strVal(data, "subtype"),
+		Errors:         normalizeResultErrors(data["errors"]),
+		Result:         strVal(data, "result"),
+		TerminalReason: strVal(data, "terminal_reason"),
+		SessionID:      strVal(data, "session_id"),
+		Data:           data,
+	}
+	if aes, ok := data["api_error_status"].(float64); ok {
+		v := int(aes)
+		err.APIErrorStatus = &v
+	}
+	return err
+}
+
+// errorResultText extracts actionable error text from a result message.
+// Fallback chain: errors[] → result → subtype (non-"success") → api_error_status → "unknown error".
+// Matches Python's _error_result_text.
+func errorResultText(message map[string]any) string {
+	errors := normalizeResultErrors(message["errors"])
+	if len(errors) > 0 {
+		result := ""
+		for i, e := range errors {
+			if i > 0 {
+				result += "; "
+			}
+			result += e
+		}
+		return result
+	}
+	if result, ok := message["result"].(string); ok {
+		result = strings.TrimSpace(result)
+		if result != "" {
+			return result
+		}
+	}
+	if subtype, ok := message["subtype"].(string); ok && subtype != "" && subtype != "success" {
+		return subtype
+	}
+	if status, ok := message["api_error_status"].(float64); ok {
+		return fmt.Sprintf("API error (HTTP %d)", int(status))
+	}
+	return "unknown error"
+}
