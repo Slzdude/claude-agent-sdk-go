@@ -143,3 +143,128 @@ func TestErrorResultText_Unknown(t *testing.T) {
 		t.Errorf("got %q", result)
 	}
 }
+
+// Additional ResultError Integration Tests
+// Matches Python's test_errors.py
+
+func TestNewResultError_MalformedData(t *testing.T) {
+	// ResultError with malformed data must not panic.
+	data := map[string]any{
+		"subtype":          123,              // not a string
+		"errors":           42,               // not a list
+		"result":           []any{1, 2, 3},   // not a string
+		"api_error_status": "500",            // not a number
+		"terminal_reason":  123,              // not a string
+		"session_id":       []any{},          // not a string
+	}
+	err := NewResultError("test error", data, 1)
+	if err == nil {
+		t.Fatal("expected non-nil error")
+	}
+	// Should not panic, fields should default gracefully
+	if err.Subtype != "" {
+		t.Errorf("expected empty subtype for non-string, got %q", err.Subtype)
+	}
+	if err.Result != "" {
+		t.Errorf("expected empty result for non-string, got %q", err.Result)
+	}
+	if err.TerminalReason != "" {
+		t.Errorf("expected empty terminal_reason for non-string, got %q", err.TerminalReason)
+	}
+	if err.SessionID != "" {
+		t.Errorf("expected empty session_id for non-string, got %q", err.SessionID)
+	}
+	if err.APIErrorStatus != nil {
+		t.Errorf("expected nil api_error_status for non-number, got %v", err.APIErrorStatus)
+	}
+}
+
+func TestNewResultError_MultipleErrors(t *testing.T) {
+	// ResultError with multiple errors must normalize them.
+	data := map[string]any{
+		"errors": []any{"error 1", "error 2", "error 3"},
+	}
+	err := NewResultError("test", data, 1)
+	if len(err.Errors) != 3 {
+		t.Errorf("expected 3 errors, got %d", len(err.Errors))
+	}
+}
+
+func TestNewResultError_BlankErrorsFiltered(t *testing.T) {
+	// Blank errors must be filtered out.
+	data := map[string]any{
+		"errors": []any{"  ", "", "valid error", "  "},
+	}
+	err := NewResultError("test", data, 1)
+	if len(err.Errors) != 1 {
+		t.Errorf("expected 1 error, got %d", len(err.Errors))
+	}
+	if err.Errors[0] != "valid error" {
+		t.Errorf("expected 'valid error', got %q", err.Errors[0])
+	}
+}
+
+func TestNewResultError_BareStringError(t *testing.T) {
+	// A bare string errors field must be wrapped in a list.
+	data := map[string]any{
+		"errors": "single error string",
+	}
+	err := NewResultError("test", data, 1)
+	if len(err.Errors) != 1 {
+		t.Errorf("expected 1 error, got %d", len(err.Errors))
+	}
+	if err.Errors[0] != "single error string" {
+		t.Errorf("expected 'single error string', got %q", err.Errors[0])
+	}
+}
+
+func TestErrorResultText_PrefersErrorsOverResult(t *testing.T) {
+	// errors[] must take priority over result text.
+	msg := map[string]any{
+		"errors": []any{"specific error"},
+		"result": "generic result",
+	}
+	result := errorResultText(msg)
+	if result != "specific error" {
+		t.Errorf("expected 'specific error', got %q", result)
+	}
+}
+
+func TestErrorResultText_PrefersResultOverSubtype(t *testing.T) {
+	// result must take priority over subtype.
+	msg := map[string]any{
+		"subtype": "error_max_turns",
+		"result":  "API Error: Stream idle timeout",
+	}
+	result := errorResultText(msg)
+	if result != "API Error: Stream idle timeout" {
+		t.Errorf("expected 'API Error: Stream idle timeout', got %q", result)
+	}
+}
+
+func TestErrorResultText_SuccessSubtypeIgnored(t *testing.T) {
+	// subtype "success" must not be used as error text.
+	msg := map[string]any{
+		"subtype": "success",
+	}
+	result := errorResultText(msg)
+	if result != "unknown error" {
+		t.Errorf("expected 'unknown error', got %q", result)
+	}
+}
+
+func TestNewResultError_ExitCodePreserved(t *testing.T) {
+	// Exit code must be preserved in the embedded ProcessError.
+	err := NewResultError("test", nil, 42)
+	if err.ExitCode != 42 {
+		t.Errorf("expected exit code 42, got %d", err.ExitCode)
+	}
+}
+
+func TestNewResultError_ZeroExitCode(t *testing.T) {
+	// Zero exit code must be preserved.
+	err := NewResultError("test", nil, 0)
+	if err.ExitCode != 0 {
+		t.Errorf("expected exit code 0, got %d", err.ExitCode)
+	}
+}

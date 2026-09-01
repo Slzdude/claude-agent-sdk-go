@@ -1202,3 +1202,609 @@ func TestParseTaskUpdatedMessage_NonDictPatchVariants(t *testing.T) {
 		}
 	}
 }
+
+// Message Parser Edge Case Tests
+// Matches Python's test_message_parser.py
+
+func TestParseToolResultBlock_IsError(t *testing.T) {
+	// tool_result block with is_error: true must be parsed correctly.
+	raw := map[string]any{
+		"type": "tool_result",
+		"tool_use_id": "toolu_01abc",
+		"content": []any{
+			map[string]any{"type": "text", "text": "Division by zero"},
+		},
+		"is_error": true,
+	}
+	block, err := parseContentBlock(raw)
+	if err != nil {
+		t.Fatalf("parseContentBlock failed: %v", err)
+	}
+	tr, ok := block.(*ToolResultBlock)
+	if !ok {
+		t.Fatalf("expected ToolResultBlock, got %T", block)
+	}
+	if tr.ToolUseID != "toolu_01abc" {
+		t.Errorf("expected tool_use_id='toolu_01abc', got %q", tr.ToolUseID)
+	}
+	if tr.IsError == nil || !*tr.IsError {
+		t.Error("expected is_error=true")
+	}
+}
+
+func TestParseToolResultBlock_IsErrorFalse(t *testing.T) {
+	// tool_result block with is_error: false must be parsed correctly.
+	raw := map[string]any{
+		"type": "tool_result",
+		"tool_use_id": "toolu_01abc",
+		"content": "Success",
+		"is_error": false,
+	}
+	block, err := parseContentBlock(raw)
+	if err != nil {
+		t.Fatalf("parseContentBlock failed: %v", err)
+	}
+	tr, ok := block.(*ToolResultBlock)
+	if !ok {
+		t.Fatalf("expected ToolResultBlock, got %T", block)
+	}
+	if tr.IsError == nil || *tr.IsError {
+		t.Error("expected is_error=false")
+	}
+}
+
+func TestParseToolResultBlock_IsErrorAbsent(t *testing.T) {
+	// tool_result block without is_error must have nil IsError.
+	raw := map[string]any{
+		"type": "tool_result",
+		"tool_use_id": "toolu_01abc",
+		"content": "Success",
+	}
+	block, err := parseContentBlock(raw)
+	if err != nil {
+		t.Fatalf("parseContentBlock failed: %v", err)
+	}
+	tr, ok := block.(*ToolResultBlock)
+	if !ok {
+		t.Fatalf("expected ToolResultBlock, got %T", block)
+	}
+	if tr.IsError != nil {
+		t.Errorf("expected is_error=nil, got %v", *tr.IsError)
+	}
+}
+
+func TestParseResultMessage_DeferredToolUse(t *testing.T) {
+	// Result message with deferred_tool_use must be parsed correctly.
+	raw := map[string]any{
+		"type":            "result",
+		"subtype":         "success",
+		"duration_ms":     100,
+		"duration_api_ms": 80,
+		"is_error":        false,
+		"num_turns":       1,
+		"session_id":      "test",
+		"deferred_tool_use": map[string]any{
+			"id":   "toolu_01abc",
+			"name": "Bash",
+			"input": map[string]any{
+				"command": "rm -rf /tmp/test",
+			},
+		},
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		t.Fatalf("parseMessage failed: %v", err)
+	}
+	rm := msg.(*ResultMessage)
+	if rm.DeferredToolUse == nil {
+		t.Fatal("expected DeferredToolUse to be set")
+	}
+	if rm.DeferredToolUse.ID != "toolu_01abc" {
+		t.Errorf("expected id='toolu_01abc', got %q", rm.DeferredToolUse.ID)
+	}
+	if rm.DeferredToolUse.Name != "Bash" {
+		t.Errorf("expected name='Bash', got %q", rm.DeferredToolUse.Name)
+	}
+	if rm.DeferredToolUse.Input == nil {
+		t.Error("expected input to be set")
+	}
+}
+
+func TestParseResultMessage_APIErrorStatus(t *testing.T) {
+	// Result message with api_error_status must be parsed correctly.
+	raw := map[string]any{
+		"type":              "result",
+		"subtype":           "error",
+		"duration_ms":       100,
+		"duration_api_ms":   80,
+		"is_error":          true,
+		"num_turns":         1,
+		"session_id":        "test",
+		"api_error_status":  float64(529),
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		t.Fatalf("parseMessage failed: %v", err)
+	}
+	rm := msg.(*ResultMessage)
+	if rm.APIErrorStatus == nil {
+		t.Fatal("expected APIErrorStatus to be set")
+	}
+	if *rm.APIErrorStatus != 529 {
+		t.Errorf("expected api_error_status=529, got %d", *rm.APIErrorStatus)
+	}
+}
+
+func TestParseResultMessage_Errors(t *testing.T) {
+	// Result message with errors array must be parsed correctly.
+	raw := map[string]any{
+		"type":            "result",
+		"subtype":         "error",
+		"duration_ms":     100,
+		"duration_api_ms": 80,
+		"is_error":        true,
+		"num_turns":       1,
+		"session_id":      "test",
+		"errors":          []any{"API rate limit exceeded", "Retry after 60s"},
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		t.Fatalf("parseMessage failed: %v", err)
+	}
+	rm := msg.(*ResultMessage)
+	if len(rm.Errors) != 2 {
+		t.Fatalf("expected 2 errors, got %d", len(rm.Errors))
+	}
+	if rm.Errors[0] != "API rate limit exceeded" {
+		t.Errorf("expected error[0]='API rate limit exceeded', got %v", rm.Errors[0])
+	}
+}
+
+func TestParseResultMessage_TerminalReason(t *testing.T) {
+	// Result message with terminal_reason must be parsed correctly.
+	raw := map[string]any{
+		"type":            "result",
+		"subtype":         "success",
+		"duration_ms":     100,
+		"duration_api_ms": 80,
+		"is_error":        false,
+		"num_turns":       1,
+		"session_id":      "test",
+		"terminal_reason": "max_turns",
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		t.Fatalf("parseMessage failed: %v", err)
+	}
+	rm := msg.(*ResultMessage)
+	if rm.TerminalReason != "max_turns" {
+		t.Errorf("expected terminal_reason='max_turns', got %q", rm.TerminalReason)
+	}
+}
+
+func TestParseResultMessage_TerminalReasonAbsent(t *testing.T) {
+	// Result message without terminal_reason must default to empty string.
+	raw := map[string]any{
+		"type":            "result",
+		"subtype":         "success",
+		"duration_ms":     100,
+		"duration_api_ms": 80,
+		"is_error":        false,
+		"num_turns":       1,
+		"session_id":      "test",
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		t.Fatalf("parseMessage failed: %v", err)
+	}
+	rm := msg.(*ResultMessage)
+	if rm.TerminalReason != "" {
+		t.Errorf("expected terminal_reason='', got %q", rm.TerminalReason)
+	}
+}
+
+func TestParseAssistantMessage_OptionalFieldsAbsent(t *testing.T) {
+	// Assistant message without optional fields must default to empty/nil.
+	raw := map[string]any{
+		"type": "assistant",
+		"message": map[string]any{
+			"role":    "assistant",
+			"content": []any{map[string]any{"type": "text", "text": "hi"}},
+			"model":   "claude-sonnet-4-20250514",
+		},
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		t.Fatalf("parseMessage failed: %v", err)
+	}
+	am := msg.(*AssistantMessage)
+	if am.MessageID != "" {
+		t.Errorf("expected message_id='', got %q", am.MessageID)
+	}
+	if am.StopReason != "" {
+		t.Errorf("expected stop_reason='', got %q", am.StopReason)
+	}
+	if am.SessionID != "" {
+		t.Errorf("expected session_id='', got %q", am.SessionID)
+	}
+	if am.UUID != "" {
+		t.Errorf("expected uuid='', got %q", am.UUID)
+	}
+	if am.Usage != nil {
+		t.Errorf("expected usage=nil, got %v", am.Usage)
+	}
+	if am.Error != "" {
+		t.Errorf("expected error='', got %q", am.Error)
+	}
+}
+
+func TestParseAssistantMessage_UsagePresent(t *testing.T) {
+	// Assistant message with usage must be parsed correctly.
+	raw := map[string]any{
+		"type": "assistant",
+		"message": map[string]any{
+			"role":    "assistant",
+			"content": []any{map[string]any{"type": "text", "text": "hi"}},
+			"model":   "claude-sonnet-4-20250514",
+			"usage": map[string]any{
+				"input_tokens":  float64(100),
+				"output_tokens": float64(50),
+			},
+		},
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		t.Fatalf("parseMessage failed: %v", err)
+	}
+	am := msg.(*AssistantMessage)
+	if am.Usage == nil {
+		t.Fatal("expected usage to be set")
+	}
+	if am.Usage["input_tokens"] != float64(100) {
+		t.Errorf("expected input_tokens=100, got %v", am.Usage["input_tokens"])
+	}
+}
+
+func TestParseResultMessage_ModelUsage(t *testing.T) {
+	// Result message with modelUsage must be parsed correctly.
+	raw := map[string]any{
+		"type":            "result",
+		"subtype":         "success",
+		"duration_ms":     100,
+		"duration_api_ms": 80,
+		"is_error":        false,
+		"num_turns":       1,
+		"session_id":      "test",
+		"modelUsage": map[string]any{
+			"claude-sonnet-4-20250514": map[string]any{
+				"inputTokens":  float64(1000),
+				"outputTokens": float64(500),
+			},
+		},
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		t.Fatalf("parseMessage failed: %v", err)
+	}
+	rm := msg.(*ResultMessage)
+	if rm.ModelUsage == nil {
+		t.Fatal("expected modelUsage to be set")
+	}
+}
+
+func TestParseResultMessage_OptionalFieldsAbsent(t *testing.T) {
+	// Result message without optional fields must default to nil/empty.
+	raw := map[string]any{
+		"type":            "result",
+		"subtype":         "success",
+		"duration_ms":     100,
+		"duration_api_ms": 80,
+		"is_error":        false,
+		"num_turns":       1,
+		"session_id":      "test",
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		t.Fatalf("parseMessage failed: %v", err)
+	}
+	rm := msg.(*ResultMessage)
+	if rm.ModelUsage != nil {
+		t.Errorf("expected modelUsage=nil, got %v", rm.ModelUsage)
+	}
+	if rm.PermissionDenials != nil {
+		t.Errorf("expected permissionDenials=nil, got %v", rm.PermissionDenials)
+	}
+	if rm.DeferredToolUse != nil {
+		t.Errorf("expected deferredToolUse=nil, got %v", rm.DeferredToolUse)
+	}
+	if rm.Errors != nil {
+		t.Errorf("expected errors=nil, got %v", rm.Errors)
+	}
+	if rm.APIErrorStatus != nil {
+		t.Errorf("expected apiErrorStatus=nil, got %v", rm.APIErrorStatus)
+	}
+	if rm.UUID != "" {
+		t.Errorf("expected uuid='', got %q", rm.UUID)
+	}
+}
+
+func TestParseUserMessage_ParentAgentIDFields(t *testing.T) {
+	// User message with parent_agent_id must be parsed correctly.
+	raw := map[string]any{
+		"type":             "user",
+		"parent_agent_id":  "agent_123",
+		"parent_tool_use_id": "toolu_01abc",
+		"message": map[string]any{
+			"role":    "user",
+			"content": "Hello",
+		},
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		t.Fatalf("parseMessage failed: %v", err)
+	}
+	um := msg.(*UserMessage)
+	if um.ParentAgentID != "agent_123" {
+		t.Errorf("expected parent_agent_id='agent_123', got %q", um.ParentAgentID)
+	}
+	if um.ParentToolUseID != "toolu_01abc" {
+		t.Errorf("expected parent_tool_use_id='toolu_01abc', got %q", um.ParentToolUseID)
+	}
+}
+
+func TestParseUserMessage_ParentAgentIDAbsent(t *testing.T) {
+	// User message without parent_agent_id must default to empty string.
+	raw := map[string]any{
+		"type": "user",
+		"message": map[string]any{
+			"role":    "user",
+			"content": "Hello",
+		},
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		t.Fatalf("parseMessage failed: %v", err)
+	}
+	um := msg.(*UserMessage)
+	if um.ParentAgentID != "" {
+		t.Errorf("expected parent_agent_id='', got %q", um.ParentAgentID)
+	}
+}
+
+func TestParseTaskStarted_OptionalFieldsAbsent(t *testing.T) {
+	// task_started without optional fields must default to empty strings.
+	raw := map[string]any{
+		"type":        "system",
+		"subtype":     "task_started",
+		"task_id":     "task-1",
+		"description": "Running agent",
+		"uuid":        "uuid-1",
+		"session_id":  "sess-1",
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		t.Fatalf("parseMessage failed: %v", err)
+	}
+	ts := msg.(*TaskStartedMessage)
+	if ts.ToolUseID != "" {
+		t.Errorf("expected tool_use_id='', got %q", ts.ToolUseID)
+	}
+	if ts.TaskType != "" {
+		t.Errorf("expected task_type='', got %q", ts.TaskType)
+	}
+}
+
+func TestParseTaskNotification_OptionalFieldsAbsent(t *testing.T) {
+	// task_notification without optional fields must default correctly.
+	raw := map[string]any{
+		"type":        "system",
+		"subtype":     "task_notification",
+		"task_id":     "task-1",
+		"status":      "completed",
+		"output_file": "/tmp/output.jsonl",
+		"summary":     "Task completed",
+		"uuid":        "uuid-1",
+		"session_id":  "sess-1",
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		t.Fatalf("parseMessage failed: %v", err)
+	}
+	tn := msg.(*TaskNotificationMessage)
+	if tn.ToolUseID != "" {
+		t.Errorf("expected tool_use_id='', got %q", tn.ToolUseID)
+	}
+	if tn.Usage != nil {
+		t.Errorf("expected usage=nil, got %v", tn.Usage)
+	}
+}
+
+func TestParseConversationReset_AllFields(t *testing.T) {
+	// conversation_reset is a top-level type, not a system subtype.
+	raw := map[string]any{
+		"type":                "conversation_reset",
+		"new_conversation_id": "conv-123",
+		"uuid":                "uuid-1",
+		"session_id":          "sess-1",
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		t.Fatalf("parseMessage failed: %v", err)
+	}
+	cr, ok := msg.(*ConversationResetMessage)
+	if !ok {
+		t.Fatalf("expected ConversationResetMessage, got %T", msg)
+	}
+	if cr.NewConversationID != "conv-123" {
+		t.Errorf("expected new_conversation_id='conv-123', got %q", cr.NewConversationID)
+	}
+	if cr.UUID != "uuid-1" {
+		t.Errorf("expected uuid='uuid-1', got %q", cr.UUID)
+	}
+	if cr.SessionID != "sess-1" {
+		t.Errorf("expected session_id='sess-1', got %q", cr.SessionID)
+	}
+}
+
+func TestParseUnknownSystemSubtype(t *testing.T) {
+	// Unknown system subtype must yield a generic SystemMessage.
+	raw := map[string]any{
+		"type":    "system",
+		"subtype": "some_future_subtype",
+		"foo":     "bar",
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		t.Fatalf("parseMessage failed: %v", err)
+	}
+	sm, ok := msg.(*SystemMessage)
+	if !ok {
+		t.Fatalf("expected SystemMessage, got %T", msg)
+	}
+	if sm.Subtype != "some_future_subtype" {
+		t.Errorf("expected subtype='some_future_subtype', got %q", sm.Subtype)
+	}
+	if sm.Data == nil {
+		t.Error("expected Data to be populated")
+	}
+}
+
+// HookEventMessage Parsing Tests
+// Matches Python's test_message_parser.py
+
+func TestParseHookEventMessage_Started(t *testing.T) {
+	// hook_started subtype must be parsed as HookEventMessage.
+	raw := map[string]any{
+		"type":            "system",
+		"subtype":         "hook_started",
+		"hook_event":      "PreToolUse",
+		"session_id":      "sess-1",
+		"uuid":            "uuid-1",
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		t.Fatalf("parseMessage failed: %v", err)
+	}
+	hem, ok := msg.(*HookEventMessage)
+	if !ok {
+		t.Fatalf("expected HookEventMessage, got %T", msg)
+	}
+	if hem.HookEventName != "PreToolUse" {
+		t.Errorf("expected hook_event_name='PreToolUse', got %q", hem.HookEventName)
+	}
+	if hem.SessionID != "sess-1" {
+		t.Errorf("expected session_id='sess-1', got %q", hem.SessionID)
+	}
+	if hem.UUID != "uuid-1" {
+		t.Errorf("expected uuid='uuid-1', got %q", hem.UUID)
+	}
+}
+
+func TestParseHookEventMessage_Response(t *testing.T) {
+	// hook_response subtype must be parsed as HookEventMessage.
+	raw := map[string]any{
+		"type":            "system",
+		"subtype":         "hook_response",
+		"hook_event":      "PostToolUse",
+		"session_id":      "sess-1",
+		"uuid":            "uuid-1",
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		t.Fatalf("parseMessage failed: %v", err)
+	}
+	hem, ok := msg.(*HookEventMessage)
+	if !ok {
+		t.Fatalf("expected HookEventMessage, got %T", msg)
+	}
+	if hem.HookEventName != "PostToolUse" {
+		t.Errorf("expected hook_event_name='PostToolUse', got %q", hem.HookEventName)
+	}
+}
+
+func TestParseHookEventMessage_HookNameFallback(t *testing.T) {
+	// hook_name field must be used as fallback when hook_event is absent.
+	raw := map[string]any{
+		"type":       "system",
+		"subtype":    "hook_started",
+		"hook_name":  "Notification",
+		"session_id": "sess-1",
+		"uuid":       "uuid-1",
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		t.Fatalf("parseMessage failed: %v", err)
+	}
+	hem, ok := msg.(*HookEventMessage)
+	if !ok {
+		t.Fatalf("expected HookEventMessage, got %T", msg)
+	}
+	if hem.HookEventName != "Notification" {
+		t.Errorf("expected hook_event_name='Notification', got %q", hem.HookEventName)
+	}
+}
+
+func TestParseHookEventMessage_HookEventNameFallback(t *testing.T) {
+	// hook_event_name field must be used as last fallback.
+	raw := map[string]any{
+		"type":            "system",
+		"subtype":         "hook_started",
+		"hook_event_name": "PermissionRequest",
+		"session_id":      "sess-1",
+		"uuid":            "uuid-1",
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		t.Fatalf("parseMessage failed: %v", err)
+	}
+	hem, ok := msg.(*HookEventMessage)
+	if !ok {
+		t.Fatalf("expected HookEventMessage, got %T", msg)
+	}
+	if hem.HookEventName != "PermissionRequest" {
+		t.Errorf("expected hook_event_name='PermissionRequest', got %q", hem.HookEventName)
+	}
+}
+
+func TestParseHookEventMessage_Minimal(t *testing.T) {
+	// Minimal hook event without optional fields must parse correctly.
+	raw := map[string]any{
+		"type":       "system",
+		"subtype":    "hook_started",
+		"hook_event": "PreToolUse",
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		t.Fatalf("parseMessage failed: %v", err)
+	}
+	hem, ok := msg.(*HookEventMessage)
+	if !ok {
+		t.Fatalf("expected HookEventMessage, got %T", msg)
+	}
+	if hem.HookEventName != "PreToolUse" {
+		t.Errorf("expected hook_event_name='PreToolUse', got %q", hem.HookEventName)
+	}
+	if hem.SessionID != "" {
+		t.Errorf("expected session_id='', got %q", hem.SessionID)
+	}
+	if hem.UUID != "" {
+		t.Errorf("expected uuid='', got %q", hem.UUID)
+	}
+}
+
+func TestParseHookEventMessage_IsSystemMessage(t *testing.T) {
+	// HookEventMessage must embed SystemMessage.
+	raw := map[string]any{
+		"type":       "system",
+		"subtype":    "hook_started",
+		"hook_event": "PreToolUse",
+	}
+	msg, err := parseMessage(raw)
+	if err != nil {
+		t.Fatalf("parseMessage failed: %v", err)
+	}
+	// Must be a SystemMessage (via embedding)
+	if _, ok := msg.(interface{ messageType() string }); !ok {
+		t.Error("expected message to implement messageType()")
+	}
+}

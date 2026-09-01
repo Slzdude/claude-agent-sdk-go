@@ -180,3 +180,129 @@ func TestModelUsage_Fields(t *testing.T) {
 		t.Errorf("OutputTokens = %d", mu.OutputTokens)
 	}
 }
+
+// Additional Origin Parsing Tests
+// Matches Python's test_message_parser.py
+
+func TestParseOrigin_HumanKind(t *testing.T) {
+	raw := map[string]any{
+		"origin": map[string]any{
+			"kind": "human",
+		},
+	}
+	origin := parseOrigin(raw)
+	if origin == nil {
+		t.Fatal("expected non-nil origin")
+	}
+	if origin.Kind != "human" {
+		t.Errorf("Kind = %q", origin.Kind)
+	}
+}
+
+func TestParseOrigin_ChannelKind(t *testing.T) {
+	raw := map[string]any{
+		"origin": map[string]any{
+			"kind":   "channel",
+			"server": "my-mcp-server",
+		},
+	}
+	origin := parseOrigin(raw)
+	if origin == nil {
+		t.Fatal("expected non-nil origin")
+	}
+	if origin.Kind != "channel" {
+		t.Errorf("Kind = %q", origin.Kind)
+	}
+	if origin.Server != "my-mcp-server" {
+		t.Errorf("Server = %q", origin.Server)
+	}
+}
+
+func TestParseOrigin_UnclassifiedKind(t *testing.T) {
+	raw := map[string]any{
+		"origin": map[string]any{
+			"kind": "unclassified",
+		},
+	}
+	origin := parseOrigin(raw)
+	if origin == nil {
+		t.Fatal("expected non-nil origin")
+	}
+	if origin.Kind != "unclassified" {
+		t.Errorf("Kind = %q", origin.Kind)
+	}
+}
+
+func TestParseOrigin_EmptyObject(t *testing.T) {
+	// Empty origin object must return nil (no kind).
+	raw := map[string]any{
+		"origin": map[string]any{},
+	}
+	origin := parseOrigin(raw)
+	if origin != nil {
+		t.Errorf("expected nil for empty origin, got %v", origin)
+	}
+}
+
+func TestParseOrigin_NilValue(t *testing.T) {
+	// origin: null must return nil.
+	raw := map[string]any{
+		"origin": nil,
+	}
+	origin := parseOrigin(raw)
+	if origin != nil {
+		t.Errorf("expected nil for null origin, got %v", origin)
+	}
+}
+
+func TestParseOrigin_StringValue(t *testing.T) {
+	// origin as string must return nil (not a map).
+	raw := map[string]any{
+		"origin": "human",
+	}
+	origin := parseOrigin(raw)
+	if origin != nil {
+		t.Errorf("expected nil for string origin, got %v", origin)
+	}
+}
+
+func TestParseOrigin_PreservedInData(t *testing.T) {
+	// The Data field must preserve all origin keys.
+	raw := map[string]any{
+		"origin": map[string]any{
+			"kind":   "peer",
+			"from":   "session-123",
+			"name":   "Alice",
+			"custom": "value",
+		},
+	}
+	origin := parseOrigin(raw)
+	if origin == nil {
+		t.Fatal("expected non-nil origin")
+	}
+	if origin.Data == nil {
+		t.Fatal("expected Data to be populated")
+	}
+	if origin.Data["custom"] != "value" {
+		t.Errorf("expected custom='value', got %v", origin.Data["custom"])
+	}
+}
+
+func TestParseOrigin_TaskNotificationWithSubkind(t *testing.T) {
+	raw := map[string]any{
+		"origin": map[string]any{
+			"kind":    "task-notification",
+			"subkind": "scheduled-trigger",
+		},
+	}
+	origin := parseOrigin(raw)
+	if origin == nil {
+		t.Fatal("expected non-nil origin")
+	}
+	if origin.Kind != "task-notification" {
+		t.Errorf("Kind = %q", origin.Kind)
+	}
+	if origin.Subkind != "scheduled-trigger" {
+		t.Errorf("Subkind = %q", origin.Subkind)
+	}
+}
