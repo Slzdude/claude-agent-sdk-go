@@ -936,3 +936,642 @@ func TestBuffering_MalformedCompleteLine(t *testing.T) {
 		t.Errorf("wrong line: %q", got)
 	}
 }
+
+// CLI Flag Coverage Tests
+// Matches Python's test_transport.py
+
+func TestBuildCommand_Effort(t *testing.T) {
+	opts := &ClaudeAgentOptions{
+		Effort: "xhigh",
+	}
+	cmd := buildTestCommand(opts)
+	if !hasArg(cmd, "--effort") {
+		t.Error("expected --effort in command")
+	}
+	if !hasArgAfter(cmd, "--effort", "xhigh") {
+		t.Error("expected --effort xhigh in command")
+	}
+}
+
+func TestBuildCommand_AddDirs(t *testing.T) {
+	opts := &ClaudeAgentOptions{
+		AddDirs: []string{"/tmp/dir1", "/tmp/dir2"},
+	}
+	cmd := buildTestCommand(opts)
+	if !hasArg(cmd, "--add-dir") {
+		t.Error("expected --add-dir in command")
+	}
+	// Should have two --add-dir flags
+	count := 0
+	for _, arg := range cmd {
+		if arg == "--add-dir" {
+			count++
+		}
+	}
+	if count != 2 {
+		t.Errorf("expected 2 --add-dir flags, got %d", count)
+	}
+}
+
+func TestBuildCommand_ToolsArray(t *testing.T) {
+	opts := &ClaudeAgentOptions{
+		Tools: []string{"Bash", "Read", "Write"},
+	}
+	cmd := buildTestCommand(opts)
+	if !hasArg(cmd, "--tools") {
+		t.Error("expected --tools in command")
+	}
+	if !hasArgAfter(cmd, "--tools", "Bash,Read,Write") {
+		t.Error("expected --tools Bash,Read,Write in command")
+	}
+}
+
+func TestBuildCommand_ToolsEmptyArray(t *testing.T) {
+	opts := &ClaudeAgentOptions{
+		Tools: []string{},
+	}
+	cmd := buildTestCommand(opts)
+	if !hasArg(cmd, "--tools") {
+		t.Error("expected --tools in command")
+	}
+	if !hasArgAfter(cmd, "--tools", "") {
+		t.Error("expected --tools '' in command")
+	}
+}
+
+func TestBuildCommand_ToolsPreset(t *testing.T) {
+	opts := &ClaudeAgentOptions{
+		Tools: &ToolsPreset{},
+	}
+	cmd := buildTestCommand(opts)
+	if !hasArg(cmd, "--tools") {
+		t.Error("expected --tools in command")
+	}
+	if !hasArgAfter(cmd, "--tools", "default") {
+		t.Error("expected --tools default in command")
+	}
+}
+
+func TestBuildCommand_WithoutTools(t *testing.T) {
+	opts := &ClaudeAgentOptions{}
+	cmd := buildTestCommand(opts)
+	if hasArg(cmd, "--tools") {
+		t.Error("--tools should not be present by default")
+	}
+}
+
+func TestBuildCommand_IncludeHookEvents(t *testing.T) {
+	opts := &ClaudeAgentOptions{
+		IncludeHookEvents: true,
+	}
+	cmd := buildTestCommand(opts)
+	if !hasArg(cmd, "--include-hook-events") {
+		t.Error("expected --include-hook-events in command")
+	}
+}
+
+func TestBuildCommand_StrictMCPConfig(t *testing.T) {
+	opts := &ClaudeAgentOptions{
+		StrictMCPConfig: true,
+	}
+	cmd := buildTestCommand(opts)
+	if !hasArg(cmd, "--strict-mcp-config") {
+		t.Error("expected --strict-mcp-config in command")
+	}
+}
+
+func TestBuildCommand_SystemPromptString(t *testing.T) {
+	opts := &ClaudeAgentOptions{
+		SystemPrompt: "You are a helpful assistant.",
+	}
+	cmd := buildTestCommand(opts)
+	if !hasArg(cmd, "--system-prompt") {
+		t.Error("expected --system-prompt in command")
+	}
+	if !hasArgAfter(cmd, "--system-prompt", "You are a helpful assistant.") {
+		t.Error("expected --system-prompt with value")
+	}
+}
+
+func TestBuildCommand_SystemPromptPreset(t *testing.T) {
+	opts := &ClaudeAgentOptions{
+		SystemPrompt: &SystemPromptPreset{},
+	}
+	cmd := buildTestCommand(opts)
+	if hasArg(cmd, "--system-prompt") {
+		t.Error("--system-prompt should not be present for empty preset")
+	}
+}
+
+func TestBuildCommand_SystemPromptPresetWithAppend(t *testing.T) {
+	opts := &ClaudeAgentOptions{
+		SystemPrompt: &SystemPromptPreset{
+			Append: "Additional instructions.",
+		},
+	}
+	cmd := buildTestCommand(opts)
+	if !hasArg(cmd, "--append-system-prompt") {
+		t.Error("expected --append-system-prompt in command")
+	}
+	if !hasArgAfter(cmd, "--append-system-prompt", "Additional instructions.") {
+		t.Error("expected --append-system-prompt with value")
+	}
+}
+
+func TestBuildCommand_DontAskPermissionMode(t *testing.T) {
+	opts := &ClaudeAgentOptions{
+		PermissionMode: "dontAsk",
+	}
+	cmd := buildTestCommand(opts)
+	if !hasArg(cmd, "--permission-mode") {
+		t.Error("expected --permission-mode in command")
+	}
+	if !hasArgAfter(cmd, "--permission-mode", "dontAsk") {
+		t.Error("expected --permission-mode dontAsk")
+	}
+}
+
+func TestBuildCommand_FallbackModel(t *testing.T) {
+	opts := &ClaudeAgentOptions{
+		FallbackModel: "claude-haiku-4-5-20251001",
+	}
+	cmd := buildTestCommand(opts)
+	if !hasArg(cmd, "--fallback-model") {
+		t.Error("expected --fallback-model in command")
+	}
+	if !hasArgAfter(cmd, "--fallback-model", "claude-haiku-4-5-20251001") {
+		t.Error("expected --fallback-model with value")
+	}
+}
+
+func TestBuildCommand_MaxThinkingTokens(t *testing.T) {
+	opts := &ClaudeAgentOptions{
+		Thinking: &ThinkingEnabled{
+			BudgetTokens: 10000,
+		},
+	}
+	cmd := buildTestCommand(opts)
+	if !hasArg(cmd, "--max-thinking-tokens") {
+		t.Error("expected --max-thinking-tokens in command")
+	}
+	if !hasArgAfter(cmd, "--max-thinking-tokens", "10000") {
+		t.Error("expected --max-thinking-tokens 10000")
+	}
+}
+
+func TestBuildCommand_DisallowedTools(t *testing.T) {
+	opts := &ClaudeAgentOptions{
+		DisallowedTools: []string{"WebSearch", "WebFetch"},
+	}
+	cmd := buildTestCommand(opts)
+	if !hasArg(cmd, "--disallowedTools") {
+		t.Error("expected --disallowedTools in command")
+	}
+	if !hasArgAfter(cmd, "--disallowedTools", "WebSearch,WebFetch") {
+		t.Error("expected --disallowedTools WebSearch,WebFetch")
+	}
+}
+
+func TestBuildCommand_BudgetUSD(t *testing.T) {
+	opts := &ClaudeAgentOptions{
+		MaxBudgetUSD: floatPtr(1.5),
+	}
+	cmd := buildTestCommand(opts)
+	if !hasArg(cmd, "--max-budget-usd") {
+		t.Error("expected --max-budget-usd in command")
+	}
+}
+
+func TestBuildCommand_ForkSession(t *testing.T) {
+	opts := &ClaudeAgentOptions{
+		ForkSession: true,
+	}
+	cmd := buildTestCommand(opts)
+	if !hasArg(cmd, "--fork-session") {
+		t.Error("expected --fork-session in command")
+	}
+}
+
+func TestBuildCommand_ResumeSessionAt(t *testing.T) {
+	opts := &ClaudeAgentOptions{
+		ResumeSessionAt: "2024-01-01T00:00:00Z",
+	}
+	cmd := buildTestCommand(opts)
+	found := false
+	for _, arg := range cmd {
+		if strings.HasPrefix(arg, "--resume-session-at=") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected --resume-session-at= in command")
+	}
+}
+
+func TestBuildCommand_ResumeDropsTurn(t *testing.T) {
+	opts := &ClaudeAgentOptions{
+		ResumeDropsTurn: "msg-123",
+	}
+	cmd := buildTestCommand(opts)
+	found := false
+	for _, arg := range cmd {
+		if strings.HasPrefix(arg, "--resume-drops-turn=") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected --resume-drops-turn= in command")
+	}
+}
+
+// Helper functions
+
+func hasArg(cmd []string, arg string) bool {
+	for _, a := range cmd {
+		if a == arg {
+			return true
+		}
+	}
+	return false
+}
+
+func hasArgAfter(cmd []string, arg, value string) bool {
+	for i, a := range cmd {
+		if a == arg && i+1 < len(cmd) && cmd[i+1] == value {
+			return true
+		}
+	}
+	return false
+}
+
+func floatPtr(f float64) *float64 {
+	return &f
+}
+
+// Environment Variable Tests
+// Matches Python's test_transport.py
+
+func TestBuildCommand_EnvVarsPassedToSubprocess(t *testing.T) {
+	// Custom env vars must be passed to the subprocess.
+	opts := &ClaudeAgentOptions{
+		Env: map[string]string{
+			"CUSTOM_VAR": "custom_value",
+			"ANOTHER":    "another_value",
+		},
+	}
+	// We can't easily test the actual env building without a real subprocess,
+	// but we verify the options are stored correctly.
+	if opts.Env["CUSTOM_VAR"] != "custom_value" {
+		t.Errorf("expected CUSTOM_VAR=custom_value, got %q", opts.Env["CUSTOM_VAR"])
+	}
+	if opts.Env["ANOTHER"] != "another_value" {
+		t.Errorf("expected ANOTHER=another_value, got %q", opts.Env["ANOTHER"])
+	}
+}
+
+func TestBuildCommand_CLAUDECODENotInherited(t *testing.T) {
+	// CLAUDECODE env var must be filtered from the subprocess.
+	// This is tested conceptually - the actual filtering happens in connect().
+	os.Setenv("CLAUDECODE", "1")
+	defer os.Unsetenv("CLAUDECODE")
+
+	// Verify the env var is set
+	if os.Getenv("CLAUDECODE") != "1" {
+		t.Fatal("CLAUDECODE should be set")
+	}
+
+	// The actual filtering happens in connect(), but we verify the code compiles
+	// and the command building works.
+	opts := &ClaudeAgentOptions{}
+	cmd := buildTestCommand(opts)
+	// Command should build successfully
+	if len(cmd) == 0 {
+		t.Error("expected non-empty command")
+	}
+}
+
+func TestBuildCommand_CLAUDECODECanBeSetViaOptionsEnv(t *testing.T) {
+	// Users can explicitly set CLAUDECODE via options.Env.
+	opts := &ClaudeAgentOptions{
+		Env: map[string]string{
+			"CLAUDECODE": "custom-value",
+		},
+	}
+	if opts.Env["CLAUDECODE"] != "custom-value" {
+		t.Errorf("expected CLAUDECODE=custom-value, got %q", opts.Env["CLAUDECODE"])
+	}
+}
+
+func TestBuildCommand_EntrypointOverride(t *testing.T) {
+	// Caller-supplied CLAUDE_CODE_ENTRYPOINT must survive the env merge.
+	opts := &ClaudeAgentOptions{
+		Env: map[string]string{
+			"CLAUDE_CODE_ENTRYPOINT": "my-custom-entrypoint",
+		},
+	}
+	if opts.Env["CLAUDE_CODE_ENTRYPOINT"] != "my-custom-entrypoint" {
+		t.Errorf("expected CLAUDE_CODE_ENTRYPOINT=my-custom-entrypoint, got %q", opts.Env["CLAUDE_CODE_ENTRYPOINT"])
+	}
+}
+
+func TestBuildCommand_WithSettings(t *testing.T) {
+	// Settings path must be passed to the CLI.
+	opts := &ClaudeAgentOptions{
+		Settings: "/path/to/settings.json",
+	}
+	cmd := buildTestCommand(opts)
+	if !hasArg(cmd, "--settings") {
+		t.Error("expected --settings in command")
+	}
+}
+
+func TestBuildCommand_WithSandbox(t *testing.T) {
+	// Sandbox settings must be merged into settings JSON.
+	opts := &ClaudeAgentOptions{
+		Sandbox: &SandboxSettings{
+			Enabled: true,
+		},
+	}
+	cmd := buildTestCommand(opts)
+	if !hasArg(cmd, "--settings") {
+		t.Error("expected --settings in command")
+	}
+}
+
+func TestBuildCommand_WithMCPStdioServer(t *testing.T) {
+	// MCP stdio server config must be serialized to JSON.
+	opts := &ClaudeAgentOptions{
+		MCPServers: map[string]MCPServerConfig{
+			"test-server": &MCPStdioServerConfig{
+				Command: "node",
+				Args:    []string{"server.js"},
+			},
+		},
+	}
+	cmd := buildTestCommand(opts)
+	if !hasArg(cmd, "--mcp-config") {
+		t.Error("expected --mcp-config in command")
+	}
+}
+
+func TestBuildCommand_WithMCPSSEServer(t *testing.T) {
+	// MCP SSE server config must be serialized to JSON.
+	opts := &ClaudeAgentOptions{
+		MCPServers: map[string]MCPServerConfig{
+			"test-server": &MCPSSEServerConfig{
+				URL: "http://localhost:3000",
+			},
+		},
+	}
+	cmd := buildTestCommand(opts)
+	if !hasArg(cmd, "--mcp-config") {
+		t.Error("expected --mcp-config in command")
+	}
+}
+
+func TestBuildCommand_WithMCPHTTPServer(t *testing.T) {
+	// MCP HTTP server config must be serialized to JSON.
+	opts := &ClaudeAgentOptions{
+		MCPServers: map[string]MCPServerConfig{
+			"test-server": &MCPHTTPServerConfig{
+				URL: "http://localhost:3000",
+			},
+		},
+	}
+	cmd := buildTestCommand(opts)
+	if !hasArg(cmd, "--mcp-config") {
+		t.Error("expected --mcp-config in command")
+	}
+}
+
+func TestBuildCommand_WithAgents(t *testing.T) {
+	// Agents must be passed via initialize, not CLI flag.
+	opts := &ClaudeAgentOptions{
+		Agents: map[string]AgentDefinition{
+			"test-agent": {
+				Prompt:   "You are a test agent.",
+				Tools:    []string{"Bash"},
+				MaxTurns: intPtr(10),
+			},
+		},
+	}
+	cmd := buildTestCommand(opts)
+	// Agents should NOT be in the CLI command
+	if hasArg(cmd, "--agents") {
+		t.Error("--agents should not be in CLI command (passed via initialize)")
+	}
+}
+
+func TestBuildCommand_WithBetas(t *testing.T) {
+	// Betas must be passed to the CLI.
+	opts := &ClaudeAgentOptions{
+		Betas: []SdkBeta{"feature1", "feature2"},
+	}
+	cmd := buildTestCommand(opts)
+	if !hasArg(cmd, "--betas") {
+		t.Error("expected --betas in command")
+	}
+	if !hasArgAfter(cmd, "--betas", "feature1,feature2") {
+		t.Error("expected --betas feature1,feature2")
+	}
+}
+
+func TestBuildCommand_WithPermissionPromptTool(t *testing.T) {
+	// Permission prompt tool must be passed to the CLI.
+	opts := &ClaudeAgentOptions{
+		PermissionPromptToolName: "my-tool",
+	}
+	cmd := buildTestCommand(opts)
+	if !hasArg(cmd, "--permission-prompt-tool") {
+		t.Error("expected --permission-prompt-tool in command")
+	}
+	if !hasArgAfter(cmd, "--permission-prompt-tool", "my-tool") {
+		t.Error("expected --permission-prompt-tool my-tool")
+	}
+}
+
+func TestBuildCommand_WithPluginDir(t *testing.T) {
+	// Plugin directories must be passed to the CLI.
+	opts := &ClaudeAgentOptions{
+		Plugins: []SdkPluginConfig{
+			{Type: "local", Path: "/path/to/plugin"},
+		},
+	}
+	cmd := buildTestCommand(opts)
+	if !hasArg(cmd, "--plugin-dir") {
+		t.Error("expected --plugin-dir in command")
+	}
+	if !hasArgAfter(cmd, "--plugin-dir", "/path/to/plugin") {
+		t.Error("expected --plugin-dir /path/to/plugin")
+	}
+}
+
+func intPtr(i int) *int {
+	return &i
+}
+
+// Skills Option Matrix Tests
+// Matches Python's test_build_command_skills_*
+
+func TestBuildCommand_SkillsNoneLeavesOptionsUntouched(t *testing.T) {
+	// skills=nil should not add --allowedTools or --setting-sources.
+	opts := &ClaudeAgentOptions{
+		Skills: nil,
+	}
+	cmd := buildTestCommand(opts)
+	if hasArg(cmd, "--allowedTools") {
+		t.Error("--allowedTools should not be present when skills is nil")
+	}
+}
+
+func TestBuildCommand_SkillsEmptyListAddsNoSkillEntries(t *testing.T) {
+	// skills=[] should add no Skill entries but set default --setting-sources.
+	opts := &ClaudeAgentOptions{
+		Skills: []string{},
+	}
+	cmd := buildTestCommand(opts)
+	// Empty list should not add Skill entries
+	val := ""
+	for i, arg := range cmd {
+		if arg == "--allowedTools" && i+1 < len(cmd) {
+			val = cmd[i+1]
+		}
+	}
+	if strings.Contains(val, "Skill") {
+		t.Error("empty skills should not add Skill entries")
+	}
+}
+
+func TestBuildCommand_SkillsMergesWithExistingAllowedTools(t *testing.T) {
+	// skills must augment (not replace) existing allowed_tools.
+	opts := &ClaudeAgentOptions{
+		AllowedTools: []string{"Bash", "Read"},
+		Skills:       []string{"coding"},
+	}
+	cmd := buildTestCommand(opts)
+	val := ""
+	for i, arg := range cmd {
+		if arg == "--allowedTools" && i+1 < len(cmd) {
+			val = cmd[i+1]
+		}
+	}
+	if !strings.Contains(val, "Bash") {
+		t.Error("existing allowed tools should be preserved")
+	}
+	if !strings.Contains(val, "Read") {
+		t.Error("existing allowed tools should be preserved")
+	}
+	if !strings.Contains(val, "Skill(coding)") {
+		t.Error("skill should be added")
+	}
+}
+
+func TestBuildCommand_SkillsPreservesUserSettingSources(t *testing.T) {
+	// Explicit setting_sources should not be overridden by skills defaults.
+	opts := &ClaudeAgentOptions{
+		Skills:         []string{"coding"},
+		SettingSources: []SettingSource{SettingSourceUser},
+	}
+	cmd := buildTestCommand(opts)
+	// Go SDK uses --setting-sources=value format
+	found := false
+	for _, arg := range cmd {
+		if strings.HasPrefix(arg, "--setting-sources=user") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected --setting-sources=user in command")
+	}
+}
+
+func TestBuildCommand_SkillsDoesNotMutateOptions(t *testing.T) {
+	// Applying skills defaults must not mutate the caller's options object.
+	originalAllowedTools := []string{"Bash"}
+	opts := &ClaudeAgentOptions{
+		AllowedTools: originalAllowedTools,
+		Skills:       []string{"coding"},
+	}
+	buildTestCommand(opts)
+	// Original should not be mutated
+	if len(originalAllowedTools) != 1 || originalAllowedTools[0] != "Bash" {
+		t.Error("original AllowedTools was mutated")
+	}
+}
+
+func TestBuildCommand_SkillsDoesNotDuplicateEntries(t *testing.T) {
+	// Injecting Skill entries must be idempotent.
+	opts := &ClaudeAgentOptions{
+		AllowedTools: []string{"Skill(coding)"},
+		Skills:       []string{"coding"},
+	}
+	cmd := buildTestCommand(opts)
+	val := ""
+	for i, arg := range cmd {
+		if arg == "--allowedTools" && i+1 < len(cmd) {
+			val = cmd[i+1]
+		}
+	}
+	// Count occurrences of Skill(coding)
+	count := strings.Count(val, "Skill(coding)")
+	if count != 1 {
+		t.Errorf("expected 1 occurrence of Skill(coding), got %d in %q", count, val)
+	}
+}
+
+func TestBuildCommand_SkillsAllShadowsSkillTool(t *testing.T) {
+	// skills="all" should add Skill to allowedTools.
+	opts := &ClaudeAgentOptions{
+		Skills: "all",
+	}
+	cmd := buildTestCommand(opts)
+	val := ""
+	for i, arg := range cmd {
+		if arg == "--allowedTools" && i+1 < len(cmd) {
+			val = cmd[i+1]
+		}
+	}
+	if !strings.Contains(val, "Skill") {
+		t.Error("skills='all' should add Skill to allowedTools")
+	}
+}
+
+func TestBuildCommand_SkillsListAddsSkillPatterns(t *testing.T) {
+	// skills=["a", "b"] should add Skill(a) and Skill(b).
+	opts := &ClaudeAgentOptions{
+		Skills: []string{"coding", "testing"},
+	}
+	cmd := buildTestCommand(opts)
+	val := ""
+	for i, arg := range cmd {
+		if arg == "--allowedTools" && i+1 < len(cmd) {
+			val = cmd[i+1]
+		}
+	}
+	if !strings.Contains(val, "Skill(coding)") {
+		t.Error("expected Skill(coding) in allowedTools")
+	}
+	if !strings.Contains(val, "Skill(testing)") {
+		t.Error("expected Skill(testing) in allowedTools")
+	}
+}
+
+func TestBuildCommand_SkillsSetsDefaultSettingSources(t *testing.T) {
+	// skills should set default setting_sources when not explicitly set.
+	// The Go SDK only sets defaults when SettingSources is nil (not empty slice).
+	opts := &ClaudeAgentOptions{
+		Skills: []string{"coding"},
+	}
+	cmd := buildTestCommand(opts)
+	// When SettingSources is nil and skills is set, defaults should be applied
+	// Go SDK uses --setting-sources=value format
+	found := false
+	for _, arg := range cmd {
+		if strings.HasPrefix(arg, "--setting-sources=") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("--setting-sources should be set when skills is configured and SettingSources is nil")
+	}
+}

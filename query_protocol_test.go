@@ -1515,3 +1515,162 @@ func TestInitializeTimeout_MinEnforced(t *testing.T) {
 		t.Errorf("expected >= 60s (minimum), got %v", d)
 	}
 }
+
+// Client Options Pipeline Tests
+// Matches Python's test_query.py
+
+func TestQueryProto_ExcludeDynamicSections(t *testing.T) {
+	// When excludeDynamicSections is set, the field must be stored correctly.
+	q := &queryProto{}
+	q.SetExcludeDynamicSections(boolPtr(true))
+	if q.excludeDynamicSections == nil || !*q.excludeDynamicSections {
+		t.Error("expected excludeDynamicSections to be true")
+	}
+}
+
+func TestQueryProto_Skills(t *testing.T) {
+	// When skills is set, the field must be stored correctly.
+	q := &queryProto{}
+	q.SetSkills([]string{"coding", "testing"})
+	if q.skills == nil {
+		t.Fatal("expected skills to be set")
+	}
+	skills, ok := q.skills.([]string)
+	if !ok {
+		t.Fatalf("expected skills to be []string, got %T", q.skills)
+	}
+	if len(skills) != 2 {
+		t.Errorf("expected 2 skills, got %d", len(skills))
+	}
+}
+
+func TestQueryProto_ForwardSubagentText(t *testing.T) {
+	// When forwardSubagentText is enabled, the field must be stored correctly.
+	q := &queryProto{}
+	q.SetForwardSubagentText(true)
+	if !q.forwardSubagentText {
+		t.Error("expected forwardSubagentText to be true")
+	}
+	q.SetForwardSubagentText(false)
+	if q.forwardSubagentText {
+		t.Error("expected forwardSubagentText to be false")
+	}
+}
+
+func TestQueryProto_ForwardSubagentTextDefaultFalse(t *testing.T) {
+	// By default, forwardSubagentText should be false.
+	q := &queryProto{}
+	if q.forwardSubagentText {
+		t.Error("expected forwardSubagentText to be false by default")
+	}
+}
+
+func TestQueryProto_SetMirrorBatcher(t *testing.T) {
+	// SetMirrorBatcher must update the field.
+	q := &queryProto{}
+	batcher := &TranscriptMirrorBatcher{}
+	q.SetMirrorBatcher(batcher)
+	if q.mirrorBatcher != batcher {
+		t.Error("expected mirrorBatcher to be set")
+	}
+}
+
+func TestQueryProto_SetExcludeDynamicSectionsFalse(t *testing.T) {
+	// SetExcludeDynamicSections(false) must set the field to false.
+	q := &queryProto{}
+	q.SetExcludeDynamicSections(boolPtr(false))
+	if q.excludeDynamicSections == nil || *q.excludeDynamicSections {
+		t.Error("expected excludeDynamicSections to be false")
+	}
+}
+
+func TestQueryProto_SetSkillsNil(t *testing.T) {
+	// SetSkills(nil) must clear the field.
+	q := &queryProto{}
+	q.SetSkills(nil)
+	if q.skills != nil {
+		t.Error("expected skills to be nil")
+	}
+}
+
+func TestHandleHookCallback_BasicFlowV2(t *testing.T) {
+	// Hook callback must be invoked with correct parameters.
+	called := false
+	var receivedInput map[string]any
+	var receivedToolUseID string
+
+	q := &queryProto{
+		hookCallbacks: map[string]HookCallback{
+			"hook-1": func(ctx context.Context, input map[string]any, toolUseID string) (map[string]any, error) {
+				called = true
+				receivedInput = input
+				receivedToolUseID = toolUseID
+				return map[string]any{"continue_": true}, nil
+			},
+		},
+	}
+
+	result, err := q.handleHookCallback(context.Background(), map[string]any{
+		"callback_id": "hook-1",
+		"input": map[string]any{
+			"tool_name": "Bash",
+			"tool_input": map[string]any{"command": "ls"},
+		},
+		"tool_use_id": "toolu-01abc",
+	})
+	if err != nil {
+		t.Fatalf("handleHookCallback failed: %v", err)
+	}
+	if !called {
+		t.Error("hook callback was not called")
+	}
+	if receivedInput == nil {
+		t.Error("expected input to be set")
+	}
+	if receivedToolUseID != "toolu-01abc" {
+		t.Errorf("expected tool_use_id='toolu-01abc', got %q", receivedToolUseID)
+	}
+	if result == nil {
+		t.Error("expected result to be set")
+	}
+}
+
+func TestHandleHookCallback_UnknownIDReturnsEmptyV2(t *testing.T) {
+	// Unknown callback ID must return empty result.
+	q := &queryProto{
+		hookCallbacks: map[string]HookCallback{},
+	}
+
+	result, err := q.handleHookCallback(context.Background(), map[string]any{
+		"callback_id": "unknown-hook",
+		"input":       map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("handleHookCallback failed: %v", err)
+	}
+	if result == nil {
+		t.Error("expected non-nil result")
+	}
+}
+
+func TestConvertHookOutput_TranslationsV2(t *testing.T) {
+	// Hook output must translate field names correctly.
+	output := map[string]any{
+		"continue_":      true,
+		"suppressOutput": false,
+		"stopReason":     "done",
+		"decision":       "allow",
+		"systemMessage":  "test",
+		"reason":         "because",
+	}
+	converted := convertHookOutput(output)
+	if converted["continue"] != true {
+		t.Error("expected continue=true")
+	}
+	if converted["suppressOutput"] != false {
+		t.Error("expected suppressOutput=false")
+	}
+	if converted["stopReason"] != "done" {
+		t.Error("expected stopReason=done")
+	}
+}
