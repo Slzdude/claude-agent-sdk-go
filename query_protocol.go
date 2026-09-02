@@ -407,6 +407,10 @@ func (q *queryProto) Run(ctx context.Context) <-chan map[string]any {
 	// on consumer for control-request messages.
 	go func() {
 		defer close(controlCh)
+		// Ensure firstResultCh is closed when the read loop exits,
+		// even if no result message was received (e.g., CLI crash).
+		// This prevents WaitForFirstResult from hanging for the full timeout.
+		defer func() { q.firstResultOnce.Do(func() { close(q.firstResultCh) }) }()
 		for raw := range raws {
 			msgType := strVal(raw, "type")
 			switch msgType {

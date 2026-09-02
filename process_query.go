@@ -168,10 +168,11 @@ func processQuery(
 			}
 		}()
 	} else {
-		// For single-message queries: if hooks or SDK MCP servers are active,
+		// For single-message queries: if hooks, SDK MCP servers, or CanUseTool are active,
 		// defer stdin close until the first result is received (matching Python SDK).
 		// This ensures the protocol stays open for inbound control requests.
-		if len(sdkServers) > 0 || len(configuredOpts.Hooks) > 0 {
+		hasBidirectionalNeeds := len(sdkServers) > 0 || len(configuredOpts.Hooks) > 0 || configuredOpts.CanUseTool != nil
+		if hasBidirectionalNeeds {
 			go func() {
 				q.WaitForFirstResult(ctx, 60*time.Second)
 				_ = t.closeStdin()

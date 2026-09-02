@@ -629,7 +629,7 @@ func (t *cliTransport) close() error {
 		case <-time.After(5 * time.Second):
 		}
 		// SIGTERM fallback.
-		_ = t.cmd.Process.Signal(os.Interrupt)
+		_ = t.cmd.Process.Signal(syscall.SIGTERM)
 		select {
 		case <-done:
 			unregisterChild(t.cmd)
