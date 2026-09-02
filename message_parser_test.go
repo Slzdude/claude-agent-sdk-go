@@ -1209,7 +1209,7 @@ func TestParseTaskUpdatedMessage_NonDictPatchVariants(t *testing.T) {
 func TestParseToolResultBlock_IsError(t *testing.T) {
 	// tool_result block with is_error: true must be parsed correctly.
 	raw := map[string]any{
-		"type": "tool_result",
+		"type":        "tool_result",
 		"tool_use_id": "toolu_01abc",
 		"content": []any{
 			map[string]any{"type": "text", "text": "Division by zero"},
@@ -1235,10 +1235,10 @@ func TestParseToolResultBlock_IsError(t *testing.T) {
 func TestParseToolResultBlock_IsErrorFalse(t *testing.T) {
 	// tool_result block with is_error: false must be parsed correctly.
 	raw := map[string]any{
-		"type": "tool_result",
+		"type":        "tool_result",
 		"tool_use_id": "toolu_01abc",
-		"content": "Success",
-		"is_error": false,
+		"content":     "Success",
+		"is_error":    false,
 	}
 	block, err := parseContentBlock(raw)
 	if err != nil {
@@ -1256,9 +1256,9 @@ func TestParseToolResultBlock_IsErrorFalse(t *testing.T) {
 func TestParseToolResultBlock_IsErrorAbsent(t *testing.T) {
 	// tool_result block without is_error must have nil IsError.
 	raw := map[string]any{
-		"type": "tool_result",
+		"type":        "tool_result",
 		"tool_use_id": "toolu_01abc",
-		"content": "Success",
+		"content":     "Success",
 	}
 	block, err := parseContentBlock(raw)
 	if err != nil {
@@ -1313,14 +1313,14 @@ func TestParseResultMessage_DeferredToolUse(t *testing.T) {
 func TestParseResultMessage_APIErrorStatus(t *testing.T) {
 	// Result message with api_error_status must be parsed correctly.
 	raw := map[string]any{
-		"type":              "result",
-		"subtype":           "error",
-		"duration_ms":       100,
-		"duration_api_ms":   80,
-		"is_error":          true,
-		"num_turns":         1,
-		"session_id":        "test",
-		"api_error_status":  float64(529),
+		"type":             "result",
+		"subtype":          "error",
+		"duration_ms":      100,
+		"duration_api_ms":  80,
+		"is_error":         true,
+		"num_turns":        1,
+		"session_id":       "test",
+		"api_error_status": float64(529),
 	}
 	msg, err := parseMessage(raw)
 	if err != nil {
@@ -1531,8 +1531,8 @@ func TestParseResultMessage_OptionalFieldsAbsent(t *testing.T) {
 func TestParseUserMessage_ParentAgentIDFields(t *testing.T) {
 	// User message with parent_agent_id must be parsed correctly.
 	raw := map[string]any{
-		"type":             "user",
-		"parent_agent_id":  "agent_123",
+		"type":               "user",
+		"parent_agent_id":    "agent_123",
 		"parent_tool_use_id": "toolu_01abc",
 		"message": map[string]any{
 			"role":    "user",
@@ -1675,11 +1675,11 @@ func TestParseUnknownSystemSubtype(t *testing.T) {
 func TestParseHookEventMessage_Started(t *testing.T) {
 	// hook_started subtype must be parsed as HookEventMessage.
 	raw := map[string]any{
-		"type":            "system",
-		"subtype":         "hook_started",
-		"hook_event":      "PreToolUse",
-		"session_id":      "sess-1",
-		"uuid":            "uuid-1",
+		"type":       "system",
+		"subtype":    "hook_started",
+		"hook_event": "PreToolUse",
+		"session_id": "sess-1",
+		"uuid":       "uuid-1",
 	}
 	msg, err := parseMessage(raw)
 	if err != nil {
@@ -1703,11 +1703,11 @@ func TestParseHookEventMessage_Started(t *testing.T) {
 func TestParseHookEventMessage_Response(t *testing.T) {
 	// hook_response subtype must be parsed as HookEventMessage.
 	raw := map[string]any{
-		"type":            "system",
-		"subtype":         "hook_response",
-		"hook_event":      "PostToolUse",
-		"session_id":      "sess-1",
-		"uuid":            "uuid-1",
+		"type":       "system",
+		"subtype":    "hook_response",
+		"hook_event": "PostToolUse",
+		"session_id": "sess-1",
+		"uuid":       "uuid-1",
 	}
 	msg, err := parseMessage(raw)
 	if err != nil {

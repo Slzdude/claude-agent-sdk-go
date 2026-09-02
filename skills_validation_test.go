@@ -108,8 +108,8 @@ func TestValidateSkillName_ControlCharacters(t *testing.T) {
 
 func TestValidateSkillName_C1ControlCharacters(t *testing.T) {
 	c1Chars := []string{
-		"namewithnel",  // NEL (Next Line)
-		"namewithcsi",  // CSI (Control Sequence Introducer)
+		"namewithnel", // NEL (Next Line)
+		"namewithcsi", // CSI (Control Sequence Introducer)
 	}
 	for _, name := range c1Chars {
 		t.Run(name, func(t *testing.T) {
@@ -152,12 +152,12 @@ func TestValidateSkillName_BOMCharacters(t *testing.T) {
 func TestValidateSkillName_DelimiterInjection(t *testing.T) {
 	// These names contain delimiters that could break --allowedTools parsing
 	maliciousNames := []string{
-		"x),Bash(*",           // Closes one rule, opens another
+		"x),Bash(*",              // Closes one rule, opens another
 		"safe),Bash,Skill(dummy", // Closes and opens multiple rules
-		"name,with,commas",    // Commas are rule separators
-		"unbalanced(",         // Unbalanced open paren
-		"unbalanced)",         // Unbalanced close paren
-		"()",                  // Empty parens
+		"name,with,commas",       // Commas are rule separators
+		"unbalanced(",            // Unbalanced open paren
+		"unbalanced)",            // Unbalanced close paren
+		"()",                     // Empty parens
 	}
 	for _, name := range maliciousNames {
 		t.Run(name, func(t *testing.T) {
@@ -176,9 +176,9 @@ func TestValidateSkillName_DelimiterInjection(t *testing.T) {
 
 func TestValidateSkillName_ConsecutiveBackslashes(t *testing.T) {
 	backslashNames := []string{
-		"name\\\\with\\\\backslashes",   // Two consecutive backslashes
+		"name\\\\with\\\\backslashes",  // Two consecutive backslashes
 		"name\\\\\\\\with\\\\\\\\more", // Four consecutive backslashes
-		"mid\\\\dle",                    // Backslashes in middle
+		"mid\\\\dle",                   // Backslashes in middle
 	}
 	for _, name := range backslashNames {
 		t.Run(name, func(t *testing.T) {

@@ -531,7 +531,7 @@ type ResultMessage struct {
 	ModelUsage        map[string]any   `json:"model_usage,omitempty"`
 	PermissionDenials []any            `json:"permission_denials,omitempty"`
 	DeferredToolUse   *DeferredToolUse `json:"deferred_tool_use,omitempty"`
-	Errors            []any           `json:"errors,omitempty"`
+	Errors            []any            `json:"errors,omitempty"`
 	// APIErrorStatus is the HTTP status code (e.g. 429, 500, 529) of the
 	// failing API call when IsError is true and Subtype is "success".
 	APIErrorStatus *int   `json:"api_error_status,omitempty"`

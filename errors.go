@@ -135,7 +135,7 @@ type ResultError struct {
 	Data           map[string]any // Raw result message payload
 }
 
-func (e *ResultError) sdkError()  {}
+func (e *ResultError) sdkError()     {}
 func (e *ResultError) Unwrap() error { return &e.ProcessError }
 
 // NewResultError creates a ResultError from a raw result message payload.

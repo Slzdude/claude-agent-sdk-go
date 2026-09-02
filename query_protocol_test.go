@@ -445,9 +445,13 @@ func (f *fakeMCPServer) ListTools(ctx context.Context) ([]MCPTool, error) {
 	return []MCPTool{{Name: "add", Description: "Add two numbers", InputSchema: map[string]any{}}}, nil
 }
 func (f *fakeMCPServer) ListResources(_ context.Context) ([]MCPResource, error) { return nil, nil }
-func (f *fakeMCPServer) ReadResource(_ context.Context, _ string) (MCPResourceContent, error) { return MCPResourceContent{}, nil }
+func (f *fakeMCPServer) ReadResource(_ context.Context, _ string) (MCPResourceContent, error) {
+	return MCPResourceContent{}, nil
+}
 func (f *fakeMCPServer) ListPrompts(_ context.Context) ([]MCPPrompt, error) { return nil, nil }
-func (f *fakeMCPServer) GetPrompt(_ context.Context, _ string, _ map[string]any) (MCPPromptResult, error) { return MCPPromptResult{}, nil }
+func (f *fakeMCPServer) GetPrompt(_ context.Context, _ string, _ map[string]any) (MCPPromptResult, error) {
+	return MCPPromptResult{}, nil
+}
 
 func (f *fakeMCPServer) CallTool(ctx context.Context, name string, arguments map[string]any) (ToolResult, error) {
 	return ToolResult{Content: []map[string]any{{"type": "text", "text": "42"}}}, nil
@@ -494,9 +498,13 @@ func (s *annotatedMCPServer) ListTools(ctx context.Context) ([]MCPTool, error) {
 	}, nil
 }
 func (s *annotatedMCPServer) ListResources(_ context.Context) ([]MCPResource, error) { return nil, nil }
-func (s *annotatedMCPServer) ReadResource(_ context.Context, _ string) (MCPResourceContent, error) { return MCPResourceContent{}, nil }
+func (s *annotatedMCPServer) ReadResource(_ context.Context, _ string) (MCPResourceContent, error) {
+	return MCPResourceContent{}, nil
+}
 func (s *annotatedMCPServer) ListPrompts(_ context.Context) ([]MCPPrompt, error) { return nil, nil }
-func (s *annotatedMCPServer) GetPrompt(_ context.Context, _ string, _ map[string]any) (MCPPromptResult, error) { return MCPPromptResult{}, nil }
+func (s *annotatedMCPServer) GetPrompt(_ context.Context, _ string, _ map[string]any) (MCPPromptResult, error) {
+	return MCPPromptResult{}, nil
+}
 
 func (s *annotatedMCPServer) CallTool(ctx context.Context, name string, arguments map[string]any) (ToolResult, error) {
 	return ToolResult{Content: []map[string]any{{"type": "text", "text": "ok"}}}, nil
@@ -511,9 +519,13 @@ func (s *errorMCPServer) ListTools(ctx context.Context) ([]MCPTool, error) {
 	return []MCPTool{{Name: "fail", Description: "Always fails", InputSchema: map[string]any{}}}, nil
 }
 func (s *errorMCPServer) ListResources(_ context.Context) ([]MCPResource, error) { return nil, nil }
-func (s *errorMCPServer) ReadResource(_ context.Context, _ string) (MCPResourceContent, error) { return MCPResourceContent{}, nil }
+func (s *errorMCPServer) ReadResource(_ context.Context, _ string) (MCPResourceContent, error) {
+	return MCPResourceContent{}, nil
+}
 func (s *errorMCPServer) ListPrompts(_ context.Context) ([]MCPPrompt, error) { return nil, nil }
-func (s *errorMCPServer) GetPrompt(_ context.Context, _ string, _ map[string]any) (MCPPromptResult, error) { return MCPPromptResult{}, nil }
+func (s *errorMCPServer) GetPrompt(_ context.Context, _ string, _ map[string]any) (MCPPromptResult, error) {
+	return MCPPromptResult{}, nil
+}
 
 func (s *errorMCPServer) CallTool(ctx context.Context, name string, arguments map[string]any) (ToolResult, error) {
 	return ToolResult{}, fmt.Errorf("expected error from tool")
@@ -528,9 +540,13 @@ func (s *imageMCPServer) ListTools(ctx context.Context) ([]MCPTool, error) {
 	return []MCPTool{{Name: "chart", Description: "Generate chart", InputSchema: map[string]any{}}}, nil
 }
 func (s *imageMCPServer) ListResources(_ context.Context) ([]MCPResource, error) { return nil, nil }
-func (s *imageMCPServer) ReadResource(_ context.Context, _ string) (MCPResourceContent, error) { return MCPResourceContent{}, nil }
+func (s *imageMCPServer) ReadResource(_ context.Context, _ string) (MCPResourceContent, error) {
+	return MCPResourceContent{}, nil
+}
 func (s *imageMCPServer) ListPrompts(_ context.Context) ([]MCPPrompt, error) { return nil, nil }
-func (s *imageMCPServer) GetPrompt(_ context.Context, _ string, _ map[string]any) (MCPPromptResult, error) { return MCPPromptResult{}, nil }
+func (s *imageMCPServer) GetPrompt(_ context.Context, _ string, _ map[string]any) (MCPPromptResult, error) {
+	return MCPPromptResult{}, nil
+}
 
 func (s *imageMCPServer) CallTool(ctx context.Context, name string, arguments map[string]any) (ToolResult, error) {
 	return ToolResult{
@@ -1333,9 +1349,13 @@ func (s *metaMCPServer) ListTools(ctx context.Context) ([]MCPTool, error) {
 	}, nil
 }
 func (s *metaMCPServer) ListResources(_ context.Context) ([]MCPResource, error) { return nil, nil }
-func (s *metaMCPServer) ReadResource(_ context.Context, _ string) (MCPResourceContent, error) { return MCPResourceContent{}, nil }
+func (s *metaMCPServer) ReadResource(_ context.Context, _ string) (MCPResourceContent, error) {
+	return MCPResourceContent{}, nil
+}
 func (s *metaMCPServer) ListPrompts(_ context.Context) ([]MCPPrompt, error) { return nil, nil }
-func (s *metaMCPServer) GetPrompt(_ context.Context, _ string, _ map[string]any) (MCPPromptResult, error) { return MCPPromptResult{}, nil }
+func (s *metaMCPServer) GetPrompt(_ context.Context, _ string, _ map[string]any) (MCPPromptResult, error) {
+	return MCPPromptResult{}, nil
+}
 
 func (s *metaMCPServer) CallTool(ctx context.Context, name string, arguments map[string]any) (ToolResult, error) {
 	return ToolResult{Content: []map[string]any{{"type": "text", "text": "big"}}}, nil
@@ -1613,7 +1633,7 @@ func TestHandleHookCallback_BasicFlowV2(t *testing.T) {
 	result, err := q.handleHookCallback(context.Background(), map[string]any{
 		"callback_id": "hook-1",
 		"input": map[string]any{
-			"tool_name": "Bash",
+			"tool_name":  "Bash",
 			"tool_input": map[string]any{"command": "ls"},
 		},
 		"tool_use_id": "toolu-01abc",

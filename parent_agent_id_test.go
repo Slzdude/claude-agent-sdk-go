@@ -6,8 +6,8 @@ import (
 
 func TestParseUserMessage_ParentAgentID(t *testing.T) {
 	raw := map[string]any{
-		"type":              "user",
-		"parent_agent_id":   "agent-1",
+		"type":               "user",
+		"parent_agent_id":    "agent-1",
 		"parent_tool_use_id": "tu-1",
 		"message": map[string]any{
 			"content": "hello",

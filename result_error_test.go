@@ -103,7 +103,7 @@ func TestErrorResultText_WithErrors(t *testing.T) {
 
 func TestErrorResultText_WithResult(t *testing.T) {
 	msg := map[string]any{
-		"subtype": "success",
+		"subtype":  "success",
 		"is_error": true,
 		"result":   "API Error: 429 Too Many Requests",
 	}
@@ -150,12 +150,12 @@ func TestErrorResultText_Unknown(t *testing.T) {
 func TestNewResultError_MalformedData(t *testing.T) {
 	// ResultError with malformed data must not panic.
 	data := map[string]any{
-		"subtype":          123,              // not a string
-		"errors":           42,               // not a list
-		"result":           []any{1, 2, 3},   // not a string
-		"api_error_status": "500",            // not a number
-		"terminal_reason":  123,              // not a string
-		"session_id":       []any{},          // not a string
+		"subtype":          123,            // not a string
+		"errors":           42,             // not a list
+		"result":           []any{1, 2, 3}, // not a string
+		"api_error_status": "500",          // not a number
+		"terminal_reason":  123,            // not a string
+		"session_id":       []any{},        // not a string
 	}
 	err := NewResultError("test error", data, 1)
 	if err == nil {
