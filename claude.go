@@ -20,6 +20,7 @@ package claude
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -104,6 +105,9 @@ func NewClaudeSDKClient(ctx context.Context, opts *ClaudeAgentOptions) (*ClaudeS
 		configuredOpts = ApplyMaterializedOptions(configuredOpts, materialized)
 	}
 	if opts.CanUseTool != nil && opts.PermissionPromptToolName != "" {
+		if materialized != nil {
+			materialized.Cleanup()
+		}
 		return nil, &CLIConnectionError{
 			Message: "CanUseTool and PermissionPromptToolName are mutually exclusive",
 		}
@@ -114,9 +118,15 @@ func NewClaudeSDKClient(ctx context.Context, opts *ClaudeAgentOptions) (*ClaudeS
 
 	t, err := newCLITransport(&configuredOpts)
 	if err != nil {
+		if materialized != nil {
+			materialized.Cleanup()
+		}
 		return nil, err
 	}
 	if err := t.connect(ctx); err != nil {
+		if materialized != nil {
+			materialized.Cleanup()
+		}
 		return nil, err
 	}
 
@@ -266,7 +276,21 @@ func (c *ClaudeSDKClient) ReceiveMessages(ctx context.Context) <-chan Message {
 
 	go func() {
 		defer close(out)
+		var lastErrorResult map[string]any
 		for raw := range c.msgCh {
+			// Track error results for ResultError conversion
+			msgType := strVal(raw, "type")
+			if msgType == "result" {
+				if boolVal(raw, "is_error") {
+					lastErrorResult = raw
+				} else {
+					lastErrorResult = nil
+				}
+			} else if msgType == "system" && strVal(raw, "subtype") == "session_state_changed" {
+				// Preserve lastErrorResult across session_state_changed
+			} else {
+				lastErrorResult = nil
+			}
 			msg, err := parseMessage(raw)
 			if err != nil || msg == nil {
 				continue
@@ -275,6 +299,21 @@ func (c *ClaudeSDKClient) ReceiveMessages(ctx context.Context) <-chan Message {
 			case out <- msg:
 			case <-ctx.Done():
 				return
+			}
+		}
+		// After channel closes, check if we need to surface a ResultError
+		if lastErrorResult != nil && c.transport != nil {
+			if transportErr := c.transport.getErr(); transportErr != nil {
+				text := errorResultText(lastErrorResult)
+				var processErr *ProcessError
+				if errors.As(transportErr, &processErr) {
+					resultErr := NewResultError(text, lastErrorResult, processErr.ExitCode)
+					resultErr.Stderr = processErr.Stderr
+					select {
+					case out <- &ErrorMessage{Err: resultErr}:
+					default:
+					}
+				}
 			}
 		}
 	}()

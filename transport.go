@@ -82,10 +82,15 @@ type cliTransport struct {
 	// _ready = False / _exit_error pattern.
 	writeFailed  bool
 	writeFailErr error
+	// waitOnce ensures cmd.Wait() is called exactly once, even if both
+	// readMessages and close() try to call it concurrently.
+	waitOnce sync.Once
+	waitDone chan struct{}
+	waitErr  error
 }
 
 func newCLITransport(opts *ClaudeAgentOptions) (*cliTransport, error) {
-	t := &cliTransport{opts: opts}
+	t := &cliTransport{opts: opts, waitDone: make(chan struct{})}
 
 	cliPath := opts.CLIPath
 	if cliPath == "" {
@@ -577,20 +582,31 @@ func (t *cliTransport) readMessages(ctx context.Context) <-chan map[string]any {
 		// create a ProcessError with the exit code.
 		if t.cmd != nil && t.cmd.Process != nil {
 			// Wait for the process to exit (should be immediate since stdout closed)
-			_ = t.cmd.Wait()
+			t.waitForProcess()
 			if t.cmd.ProcessState != nil && !t.cmd.ProcessState.Success() {
 				exitCode := t.cmd.ProcessState.ExitCode()
 				if t.getErr() == nil {
 					t.setErr(&ProcessError{
 						Message:  fmt.Sprintf("Command failed with exit code %d", exitCode),
 						ExitCode: exitCode,
-						Stderr:   "Check stderr output for details",
 					})
 				}
 			}
 		}
 	}()
 	return ch
+}
+
+// waitForProcess waits for the process to exit exactly once.
+// Safe to call from multiple goroutines concurrently.
+func (t *cliTransport) waitForProcess() {
+	t.waitOnce.Do(func() {
+		if t.cmd != nil {
+			t.waitErr = t.cmd.Wait()
+		}
+		close(t.waitDone)
+	})
+	<-t.waitDone
 }
 
 func (t *cliTransport) write(ctx context.Context, line string) error {
@@ -651,14 +667,17 @@ func (t *cliTransport) close() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.cmd != nil && t.cmd.Process != nil {
-		// Wait in a goroutine — only one Wait() call is allowed per process,
-		// so all escalation paths read from the same channel.
-		done := make(chan error, 1)
-		go func() { done <- t.cmd.Wait() }()
+		// Use waitForProcess which is safe for concurrent calls.
+		// Run the wait in a goroutine so we can implement the escalation.
+		waitCh := make(chan struct{})
+		go func() {
+			t.waitForProcess()
+			close(waitCh)
+		}()
 
 		// Wait up to 5s for natural exit after stdin close.
 		select {
-		case <-done:
+		case <-waitCh:
 			unregisterChild(t.cmd)
 			return nil
 		case <-time.After(5 * time.Second):
@@ -666,15 +685,15 @@ func (t *cliTransport) close() error {
 		// SIGTERM fallback.
 		_ = t.cmd.Process.Signal(syscall.SIGTERM)
 		select {
-		case <-done:
+		case <-waitCh:
 			unregisterChild(t.cmd)
 			return nil
 		case <-time.After(5 * time.Second):
 		}
-		// SIGKILL fallback — still read from the same channel.
+		// SIGKILL fallback.
 		_ = t.cmd.Process.Kill()
 		select {
-		case <-done:
+		case <-waitCh:
 			unregisterChild(t.cmd)
 			return nil
 		case <-time.After(5 * time.Second):

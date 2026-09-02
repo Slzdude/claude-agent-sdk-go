@@ -205,16 +205,18 @@ func processQuery(
 			var lastErrorResult map[string]any
 			for raw := range rawCh {
 				// Track error results (same logic as non-traced path).
-				if strVal(raw, "type") == "result" {
+				msgType := strVal(raw, "type")
+				if msgType == "result" {
 					if boolVal(raw, "is_error") {
 						lastErrorResult = raw
 					} else {
 						lastErrorResult = nil
 					}
-				} else if strVal(raw, "type") == "system" {
-					if strVal(raw, "subtype") != "session_state_changed" {
-						lastErrorResult = nil
-					}
+				} else if msgType == "system" && strVal(raw, "subtype") == "session_state_changed" {
+					// Preserve lastErrorResult across session_state_changed
+				} else {
+					// Clear on ALL other messages
+					lastErrorResult = nil
 				}
 				msg, err := parseMessage(raw)
 				if err != nil || msg == nil {
@@ -248,21 +250,28 @@ func processQuery(
 		go func() {
 			defer close(out)
 			defer func() { _ = t.close() }()
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("panic in non-traced message channel", "recover", r)
+				}
+			}()
 
 			var lastErrorResult map[string]any
 			for raw := range rawCh {
 				// Track error results for potential ProcessError → ResultError
 				// conversion (matches Python SDK's _last_error_result tracking).
-				if strVal(raw, "type") == "result" {
+				msgType := strVal(raw, "type")
+				if msgType == "result" {
 					if boolVal(raw, "is_error") {
 						lastErrorResult = raw
 					} else {
 						lastErrorResult = nil
 					}
-				} else if strVal(raw, "type") == "system" {
-					if strVal(raw, "subtype") != "session_state_changed" {
-						lastErrorResult = nil
-					}
+				} else if msgType == "system" && strVal(raw, "subtype") == "session_state_changed" {
+					// Preserve lastErrorResult across session_state_changed
+				} else {
+					// Clear on ALL other messages (user, assistant, system, etc.)
+					lastErrorResult = nil
 				}
 				msg, err := parseMessage(raw)
 				if err != nil || msg == nil {
