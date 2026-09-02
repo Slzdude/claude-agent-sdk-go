@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -79,7 +80,6 @@ func hasArgPrefix(cmd []string, prefix string) bool {
 // Matches Python's test_bad_resume_values_raise_on_windows
 
 func TestRejectWindowsCmdMetacharacters_Resume(t *testing.T) {
-	// On non-Windows, this should be a no-op (no panic)
 	metachars := []string{
 		"test&value",
 		"test|value",
@@ -94,24 +94,52 @@ func TestRejectWindowsCmdMetacharacters_Resume(t *testing.T) {
 	}
 	for _, val := range metachars {
 		t.Run(val, func(t *testing.T) {
-			// Should not panic on non-Windows
-			rejectWindowsCmdMetacharacters("resume", val)
+			if runtime.GOOS == "windows" {
+				// On Windows, should panic for metacharacters
+				defer func() {
+					if r := recover(); r == nil {
+						t.Errorf("expected panic for metacharacter in %q on Windows", val)
+					}
+				}()
+				rejectWindowsCmdMetacharacters("resume", val)
+			} else {
+				// On non-Windows, should be a no-op
+				rejectWindowsCmdMetacharacters("resume", val)
+			}
 		})
 	}
 }
 
 func TestRejectWindowsCmdMetacharacters_SessionID(t *testing.T) {
-	// On non-Windows, this should be a no-op (no panic)
+	if runtime.GOOS == "windows" {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected panic for metacharacter on Windows")
+			}
+		}()
+	}
 	rejectWindowsCmdMetacharacters("session_id", "test&value")
 }
 
 func TestRejectWindowsCmdMetacharacters_ResumeSessionAt(t *testing.T) {
-	// On non-Windows, this should be a no-op (no panic)
+	if runtime.GOOS == "windows" {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected panic for metacharacter on Windows")
+			}
+		}()
+	}
 	rejectWindowsCmdMetacharacters("resume_session_at", "test&value")
 }
 
 func TestRejectWindowsCmdMetacharacters_ResumeDropsTurn(t *testing.T) {
-	// On non-Windows, this should be a no-op (no panic)
+	if runtime.GOOS == "windows" {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected panic for metacharacter on Windows")
+			}
+		}()
+	}
 	rejectWindowsCmdMetacharacters("resume_drops_turn", "test&value")
 }
 
