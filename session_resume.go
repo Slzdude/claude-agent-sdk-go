@@ -219,6 +219,7 @@ func resolveContinueCandidate(ctx context.Context, store SessionStore, projectKe
 }
 
 // writeJSONL writes entries as one JSON line each to path (mode 0600).
+// Matches Python's _write_jsonl: sets chmod after writing to override umask.
 func writeJSONL(path string, entries []SessionStoreEntry) error {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
@@ -238,6 +239,9 @@ func writeJSONL(path string, entries []SessionStoreEntry) error {
 			return err
 		}
 	}
+	// Explicitly set permissions after writing (matches Python's path.chmod(0o600)).
+	// The umask may have reduced the permissions set during OpenFile.
+	_ = os.Chmod(path, 0o600)
 	return nil
 }
 
