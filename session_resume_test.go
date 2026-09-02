@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -39,10 +40,12 @@ func TestWriteJSONL(t *testing.T) {
 		t.Errorf("expected type=user, got %v", first["type"])
 	}
 
-	// Check file permissions (0600).
-	info, _ := os.Stat(path)
-	if info.Mode().Perm() != 0o600 {
-		t.Errorf("expected mode 0600, got %o", info.Mode().Perm())
+	// Check file permissions (0600) - skip on Windows as chmod works differently.
+	if runtime.GOOS != "windows" {
+		info, _ := os.Stat(path)
+		if info.Mode().Perm() != 0o600 {
+			t.Errorf("expected mode 0600, got %o", info.Mode().Perm())
+		}
 	}
 }
 

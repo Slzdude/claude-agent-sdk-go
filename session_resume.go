@@ -460,10 +460,14 @@ func isSafeSubpath(subpath, sessionDir string) bool {
 		return false
 	}
 	// Reject absolute paths.
-	if filepath.IsAbs(subpath) {
+	// On Windows, filepath.IsAbs() doesn't consider "/absolute" as absolute
+	// (no drive letter), so we also check for leading / or \.
+	// Matches Python: if Path(subpath).is_absolute() or subpath.startswith(("/", "\\")):
+	if filepath.IsAbs(subpath) || strings.HasPrefix(subpath, "/") || strings.HasPrefix(subpath, "\\") {
 		return false
 	}
 	// Reject drive-prefixed paths (C:foo, UNC).
+	// Uses ntpath.splitdrive logic regardless of host OS (matches Python).
 	if strings.ContainsRune(subpath, ':') {
 		return false
 	}
