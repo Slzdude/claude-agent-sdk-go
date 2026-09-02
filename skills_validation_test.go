@@ -81,11 +81,6 @@ func TestValidateSkillName_WildcardSuffix(t *testing.T) {
 	validateSkillName("my-skill:*")
 }
 
-func TestRejectWindowsCmdMetacharacters_NonWindows(t *testing.T) {
-	// On non-Windows, this should be a no-op
-	rejectWindowsCmdMetacharacters("resume", "test&value")
-}
-
 // Skill name control character injection tests
 // Matches Python's test_build_command_skills_rejects_control_characters
 

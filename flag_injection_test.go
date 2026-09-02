@@ -79,7 +79,14 @@ func hasArgPrefix(cmd []string, prefix string) bool {
 // Windows Metacharacter Rejection Tests
 // Matches Python's test_bad_resume_values_raise_on_windows
 
+// TestRejectWindowsCmdMetacharacters_Resume verifies that resume values with
+// cmd.exe metacharacters are rejected on Windows (CVE-2024-27980).
+// On non-Windows, the function is a no-op.
+// Matches Python's test_bad_resume_values_raise_on_windows.
 func TestRejectWindowsCmdMetacharacters_Resume(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows-only test (cmd.exe metacharacter rejection)")
+	}
 	metachars := []string{
 		"test&value",
 		"test|value",
@@ -94,53 +101,65 @@ func TestRejectWindowsCmdMetacharacters_Resume(t *testing.T) {
 	}
 	for _, val := range metachars {
 		t.Run(val, func(t *testing.T) {
-			if runtime.GOOS == "windows" {
-				// On Windows, should panic for metacharacters
-				defer func() {
-					if r := recover(); r == nil {
-						t.Errorf("expected panic for metacharacter in %q on Windows", val)
-					}
-				}()
-				rejectWindowsCmdMetacharacters("resume", val)
-			} else {
-				// On non-Windows, should be a no-op
-				rejectWindowsCmdMetacharacters("resume", val)
-			}
+			defer func() {
+				if r := recover(); r == nil {
+					t.Errorf("expected panic for metacharacter in %q", val)
+				}
+			}()
+			rejectWindowsCmdMetacharacters("resume", val)
 		})
 	}
 }
 
+// TestRejectWindowsCmdMetacharacters_SessionID verifies session_id rejection on Windows.
 func TestRejectWindowsCmdMetacharacters_SessionID(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Error("expected panic for metacharacter on Windows")
-			}
-		}()
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows-only test")
 	}
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic for metacharacter")
+		}
+	}()
 	rejectWindowsCmdMetacharacters("session_id", "test&value")
 }
 
+// TestRejectWindowsCmdMetacharacters_ResumeSessionAt verifies resume_session_at rejection on Windows.
 func TestRejectWindowsCmdMetacharacters_ResumeSessionAt(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Error("expected panic for metacharacter on Windows")
-			}
-		}()
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows-only test")
 	}
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic for metacharacter")
+		}
+	}()
 	rejectWindowsCmdMetacharacters("resume_session_at", "test&value")
 }
 
+// TestRejectWindowsCmdMetacharacters_ResumeDropsTurn verifies resume_drops_turn rejection on Windows.
 func TestRejectWindowsCmdMetacharacters_ResumeDropsTurn(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Error("expected panic for metacharacter on Windows")
-			}
-		}()
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows-only test")
 	}
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic for metacharacter")
+		}
+	}()
 	rejectWindowsCmdMetacharacters("resume_drops_turn", "test&value")
+}
+
+// TestRejectWindowsCmdMetacharacters_NonWindows verifies no-op on non-Windows.
+func TestRejectWindowsCmdMetacharacters_NonWindows(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Non-Windows only test")
+	}
+	// Should not panic on non-Windows
+	rejectWindowsCmdMetacharacters("resume", "test&value")
+	rejectWindowsCmdMetacharacters("session_id", "test|value")
+	rejectWindowsCmdMetacharacters("resume_session_at", "test<value")
+	rejectWindowsCmdMetacharacters("resume_drops_turn", "test>value")
 }
 
 // Extra Args Dash-Leading Security Tests
