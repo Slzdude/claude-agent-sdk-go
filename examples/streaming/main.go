@@ -255,6 +255,7 @@ func exampleWithOptions(ctx context.Context) {
 	fmt.Println("=== Custom Options Example ===")
 
 	opts := &claude.ClaudeAgentOptions{
+		//nolint:staticcheck // AllowedTools is correct for built-in tool names (not Skills)
 		AllowedTools: []string{"Read", "Write"},
 		SystemPrompt: "You are a helpful coding assistant.",
 	}

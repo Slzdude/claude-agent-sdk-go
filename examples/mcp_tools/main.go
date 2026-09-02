@@ -139,6 +139,7 @@ func main() {
 			},
 		},
 		// Pre-approve all calculator tools so they can be used without permission prompts.
+		//nolint:staticcheck // AllowedTools is correct for MCP tool names (not Skills)
 		AllowedTools: []string{
 			"mcp__calc__add",
 			"mcp__calc__subtract",

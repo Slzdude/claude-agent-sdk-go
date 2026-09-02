@@ -484,31 +484,6 @@ func TestMCPToolCallIsErrorFlag(t *testing.T) {
 
 // Helper server types for MCP tests
 
-type testToolServer struct {
-	tools []MCPTool
-}
-
-func (s *testToolServer) Name() string    { return "test-tool" }
-func (s *testToolServer) Version() string { return "1.0.0" }
-func (s *testToolServer) ListTools(_ context.Context) ([]MCPTool, error) {
-	return s.tools, nil
-}
-func (s *testToolServer) CallTool(_ context.Context, _ string, _ map[string]any) (ToolResult, error) {
-	return ToolResult{}, nil
-}
-func (s *testToolServer) ListResources(_ context.Context) ([]MCPResource, error) {
-	return nil, nil
-}
-func (s *testToolServer) ReadResource(_ context.Context, _ string) (MCPResourceContent, error) {
-	return MCPResourceContent{}, nil
-}
-func (s *testToolServer) ListPrompts(_ context.Context) ([]MCPPrompt, error) {
-	return nil, nil
-}
-func (s *testToolServer) GetPrompt(_ context.Context, _ string, _ map[string]any) (MCPPromptResult, error) {
-	return MCPPromptResult{}, nil
-}
-
 type testErrorToolServer struct {
 	tools     []MCPTool
 	callError string

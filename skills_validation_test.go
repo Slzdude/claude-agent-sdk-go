@@ -108,8 +108,8 @@ func TestValidateSkillName_ControlCharacters(t *testing.T) {
 
 func TestValidateSkillName_C1ControlCharacters(t *testing.T) {
 	c1Chars := []string{
-		"namewithnel", // NEL (Next Line)
-		"namewithcsi", // CSI (Control Sequence Introducer)
+		"name\xc2\x85with\xc2\x85nel", // NEL (Next Line)
+		"name\x9bwith\x9bcsi", // CSI (Control Sequence Introducer)
 	}
 	for _, name := range c1Chars {
 		t.Run(name, func(t *testing.T) {
