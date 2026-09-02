@@ -107,9 +107,12 @@ func TestValidateSkillName_ControlCharacters(t *testing.T) {
 // Matches Python's test_build_command_skills_rejects_c1_control_characters
 
 func TestValidateSkillName_C1ControlCharacters(t *testing.T) {
+	// C1 control characters are U+0080-U+009F, encoded as 2-byte UTF-8 sequences.
+	// NEL (Next Line) = U+0085 = 0xC2 0x85
+	// CSI (Control Sequence Introducer) = U+009B = 0xC2 0x9B
 	c1Chars := []string{
 		"name\xc2\x85with\xc2\x85nel", // NEL (Next Line)
-		"name\x9bwith\x9bcsi", // CSI (Control Sequence Introducer)
+		"name\xc2\x9bwith\xc2\x9bcsi", // CSI (Control Sequence Introducer)
 	}
 	for _, name := range c1Chars {
 		t.Run(name, func(t *testing.T) {
