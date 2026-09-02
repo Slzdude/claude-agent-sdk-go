@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -294,6 +295,7 @@ var resumeSettingsStrippedKeys = []string{"enabledPlugins", "extraKnownMarketpla
 
 // copyAndStripSettings copies a settings JSON file, removing plugin declarations
 // and CLAUDE_CONFIG_DIR from env to prevent issues during resume.
+// Matches Python's _copy_if_present with _strip_settings_for_resume.
 func copyAndStripSettings(src, dst string) {
 	data, err := os.ReadFile(src)
 	if err != nil {
@@ -301,11 +303,13 @@ func copyAndStripSettings(src, dst string) {
 	}
 	var settings map[string]any
 	if err := json.Unmarshal(data, &settings); err != nil {
-		// Malformed JSON - copy through as-is
-		os.WriteFile(dst, data, 0o600)
+		// Malformed JSON - copy through as-is (matches Python behavior)
+		if writeErr := os.WriteFile(dst, data, 0o600); writeErr != nil {
+			log.Printf("[session_resume] failed to copy malformed settings %s: %v", src, writeErr)
+		}
 		return
 	}
-	// Strip plugin-related keys
+	// Strip plugin-related keys (matches Python's _RESUME_SETTINGS_STRIPPED_KEYS)
 	for _, key := range resumeSettingsStrippedKeys {
 		delete(settings, key)
 	}
@@ -316,10 +320,14 @@ func copyAndStripSettings(src, dst string) {
 	out, err := json.Marshal(settings)
 	if err != nil {
 		// Fallback to original bytes
-		os.WriteFile(dst, data, 0o600)
+		if writeErr := os.WriteFile(dst, data, 0o600); writeErr != nil {
+			log.Printf("[session_resume] failed to copy settings %s: %v", src, writeErr)
+		}
 		return
 	}
-	os.WriteFile(dst, out, 0o600)
+	if writeErr := os.WriteFile(dst, out, 0o600); writeErr != nil {
+		log.Printf("[session_resume] failed to write stripped settings %s: %v", dst, writeErr)
+	}
 }
 
 // writeRedactedCredentials writes credsJSON with claudeAiOauth.refreshToken removed.

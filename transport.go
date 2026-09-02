@@ -86,7 +86,6 @@ type cliTransport struct {
 	// readMessages and close() try to call it concurrently.
 	waitOnce sync.Once
 	waitDone chan struct{}
-	waitErr  error
 }
 
 func newCLITransport(opts *ClaudeAgentOptions) (*cliTransport, error) {
@@ -602,7 +601,7 @@ func (t *cliTransport) readMessages(ctx context.Context) <-chan map[string]any {
 func (t *cliTransport) waitForProcess() {
 	t.waitOnce.Do(func() {
 		if t.cmd != nil {
-			t.waitErr = t.cmd.Wait()
+			_ = t.cmd.Wait()
 		}
 		close(t.waitDone)
 	})
