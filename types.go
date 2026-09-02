@@ -477,6 +477,15 @@ type MirrorErrorMessage struct {
 
 func (m *MirrorErrorMessage) messageType() string { return "mirror_error" }
 
+// ErrorMessage wraps an error for delivery through the message channel.
+// This is used to surface ResultError to consumers when the CLI exits
+// after reporting an error result. Matches Python SDK's error sentinel.
+type ErrorMessage struct {
+	Err error `json:"-"`
+}
+
+func (m *ErrorMessage) messageType() string { return "error" }
+
 // DeferredToolUse represents a tool use that was deferred by a PreToolUse hook
 // returning permissionDecision "defer". The run stops and the result message
 // carries the deferred tool call so the caller can inspect it.

@@ -109,6 +109,22 @@ func (t *cliTransport) findCLI() (string, error) {
 		return p, nil
 	}
 	if p, err := exec.LookPath("claude"); err == nil {
+		// On Windows, prefer native .exe over .cmd shims.
+		// npm installs a claude.cmd shim that runs via cmd.exe,
+		// which is vulnerable to command injection (CVE-2024-27980).
+		if runtime.GOOS == "windows" && isWindowsBatchCLI(p) {
+			// Try to find a native claude.exe in the same directory
+			dir := filepath.Dir(p)
+			nativeExe := filepath.Join(dir, "claude.exe")
+			if fi, err := os.Stat(nativeExe); err == nil && !fi.IsDir() {
+				return nativeExe, nil
+			}
+			// Also try PATH for claude.exe specifically
+			if p2, err := exec.LookPath("claude.exe"); err == nil {
+				return p2, nil
+			}
+			// Return the .cmd path - rejectWindowsBatchCLI will panic with a helpful message
+		}
 		return p, nil
 	}
 	home, _ := os.UserHomeDir()
@@ -198,7 +214,9 @@ func (t *cliTransport) buildCommand() []string {
 				}
 			}
 		}
-		if len(effectiveSettingSources) == 0 {
+		// Only default when SettingSources is nil (not explicitly set to empty slice).
+		// An explicit empty slice means "disable all sources" (SDK isolation mode).
+		if effectiveSettingSources == nil {
 			effectiveSettingSources = []SettingSource{SettingSourceUser, SettingSourceProject}
 		}
 	}
@@ -554,6 +572,23 @@ func (t *cliTransport) readMessages(ctx context.Context) <-chan map[string]any {
 				t.setErr(&ProcessError{Message: "stdout read error", Stderr: err.Error()})
 			}
 		}
+		// Check process exit code after stdout closes.
+		// If the process exited with a non-zero code and we don't already have an error,
+		// create a ProcessError with the exit code.
+		if t.cmd != nil && t.cmd.Process != nil {
+			// Wait for the process to exit (should be immediate since stdout closed)
+			_ = t.cmd.Wait()
+			if t.cmd.ProcessState != nil && !t.cmd.ProcessState.Success() {
+				exitCode := t.cmd.ProcessState.ExitCode()
+				if t.getErr() == nil {
+					t.setErr(&ProcessError{
+						Message:  fmt.Sprintf("Command failed with exit code %d", exitCode),
+						ExitCode: exitCode,
+						Stderr:   "Check stderr output for details",
+					})
+				}
+			}
+		}
 	}()
 	return ch
 }
@@ -668,7 +703,11 @@ func (t *cliTransport) getErr() error {
 }
 
 func (t *cliTransport) checkVersion() {
-	out, err := exec.Command(t.cliPath, "--version").Output()
+	// Use a 2-second timeout to prevent hanging if the CLI is unresponsive.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, t.cliPath, "--version")
+	out, err := cmd.Output()
 	if err != nil {
 		return
 	}

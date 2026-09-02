@@ -241,8 +241,10 @@ func writeJSONL(path string, entries []SessionStoreEntry) error {
 	return nil
 }
 
-// copyAuthFiles copies .credentials.json (with refreshToken redacted) and
-// .claude.json from the caller's config dir to tmpBase.
+// copyAuthFiles copies .credentials.json (with refreshToken redacted),
+// .claude.json, settings.json, and cowork_settings.json from the caller's
+// config dir to tmpBase. Settings files have plugin declarations stripped
+// to prevent reconciliation against the empty tmp_base plugin cache.
 func copyAuthFiles(tmpBase string, env map[string]string) {
 	callerConfigDir := env["CLAUDE_CONFIG_DIR"]
 	if callerConfigDir == "" {
@@ -270,6 +272,50 @@ func copyAuthFiles(tmpBase string, env map[string]string) {
 		claudeJSONSrc = filepath.Join(home, ".claude.json")
 	}
 	copyFile(claudeJSONSrc, filepath.Join(tmpBase, ".claude.json"))
+
+	// Copy settings.json and cowork_settings.json with plugin stripping.
+	// These carry apiKeyHelper (a fourth auth mechanism) plus env/hooks/permissions.
+	// Plugin declarations are stripped to prevent reconciliation against the
+	// always-empty tmp_base/plugins cache.
+	for _, name := range []string{"settings.json", "cowork_settings.json"} {
+		src := filepath.Join(sourceConfigDir, name)
+		dst := filepath.Join(tmpBase, name)
+		copyAndStripSettings(src, dst)
+	}
+}
+
+// resumeSettingsStrippedKeys are settings keys that misbehave under the
+// redirected CLAUDE_CONFIG_DIR during resume.
+var resumeSettingsStrippedKeys = []string{"enabledPlugins", "extraKnownMarketplaces"}
+
+// copyAndStripSettings copies a settings JSON file, removing plugin declarations
+// and CLAUDE_CONFIG_DIR from env to prevent issues during resume.
+func copyAndStripSettings(src, dst string) {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return // File doesn't exist, skip
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		// Malformed JSON - copy through as-is
+		os.WriteFile(dst, data, 0o600)
+		return
+	}
+	// Strip plugin-related keys
+	for _, key := range resumeSettingsStrippedKeys {
+		delete(settings, key)
+	}
+	// Strip CLAUDE_CONFIG_DIR from env if present
+	if envMap, ok := settings["env"].(map[string]any); ok {
+		delete(envMap, "CLAUDE_CONFIG_DIR")
+	}
+	out, err := json.Marshal(settings)
+	if err != nil {
+		// Fallback to original bytes
+		os.WriteFile(dst, data, 0o600)
+		return
+	}
+	os.WriteFile(dst, out, 0o600)
 }
 
 // writeRedactedCredentials writes credsJSON with claudeAiOauth.refreshToken removed.

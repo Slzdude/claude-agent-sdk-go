@@ -3,6 +3,7 @@ package claude
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -226,11 +227,19 @@ func processQuery(
 					return
 				}
 			}
+			// Convert ProcessError to ResultError when we have an error result.
 			if lastErrorResult != nil {
 				if transportErr := t.getErr(); transportErr != nil {
 					text := errorResultText(lastErrorResult)
-					slog.Debug("ProcessError after error result (already surfaced via ResultMessage)",
-						"error", text, "transport_err", transportErr)
+					var processErr *ProcessError
+					if errors.As(transportErr, &processErr) {
+						resultErr := NewResultError(text, lastErrorResult, processErr.ExitCode)
+						resultErr.Stderr = processErr.Stderr
+						select {
+						case out <- &ErrorMessage{Err: resultErr}:
+						case <-ctx.Done():
+						}
+					}
 				}
 			}
 		}()
@@ -265,12 +274,22 @@ func processQuery(
 					return
 				}
 			}
-			// Log if we had an error result and the transport also errored.
+			// Convert ProcessError to ResultError when we have an error result.
+			// This matches Python SDK's behavior of surfacing structured errors.
 			if lastErrorResult != nil {
 				if transportErr := t.getErr(); transportErr != nil {
 					text := errorResultText(lastErrorResult)
-					slog.Debug("ProcessError after error result (already surfaced via ResultMessage)",
-						"error", text, "transport_err", transportErr)
+					var processErr *ProcessError
+					if errors.As(transportErr, &processErr) {
+						// Create ResultError with the structured payload
+						resultErr := NewResultError(text, lastErrorResult, processErr.ExitCode)
+						resultErr.Stderr = processErr.Stderr
+						// Send as an error message to the consumer
+						select {
+						case out <- &ErrorMessage{Err: resultErr}:
+						case <-ctx.Done():
+						}
+					}
 				}
 			}
 		}()
