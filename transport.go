@@ -682,8 +682,8 @@ func (t *cliTransport) close() error {
 			return nil
 		case <-time.After(5 * time.Second):
 		}
-		// SIGTERM fallback.
-		_ = t.cmd.Process.Signal(syscall.SIGTERM)
+		// SIGTERM fallback (os.Interrupt on Windows, syscall.SIGTERM on Unix).
+		_ = t.cmd.Process.Signal(terminateSignal)
 		select {
 		case <-waitCh:
 			unregisterChild(t.cmd)

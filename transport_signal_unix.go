@@ -20,3 +20,7 @@ func init() {
 		os.Exit(1)
 	}()
 }
+
+// terminateSignal returns the appropriate signal for graceful termination.
+// On Unix, this is SIGTERM. On Windows, this is os.Interrupt (syscall.SIGTERM is a no-op on Windows).
+var terminateSignal = syscall.SIGTERM
