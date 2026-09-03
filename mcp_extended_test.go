@@ -2,6 +2,7 @@ package claude
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -690,4 +691,384 @@ func TestMCPServerInitiatedNotificationsDropped(t *testing.T) {
 	if mcpResp["error"] != nil {
 		t.Errorf("ping got error: %v", mcpResp["error"])
 	}
+}
+
+// MCP 2.x Tests
+
+func TestMCPVersionNegotiation(t *testing.T) {
+	tests := []struct {
+		name            string
+		clientVersion   string
+		expectedVersion string
+	}{
+		{"supported 2024-11-05", "2024-11-05", "2024-11-05"},
+		{"supported 2025-03-26", "2025-03-26", "2025-03-26"},
+		{"supported 2025-06-18", "2025-06-18", "2025-06-18"},
+		{"supported 2025-11-25", "2025-11-25", "2025-11-25"},
+		{"unsupported version", "9999-99-99", "2025-03-26"},
+		{"empty version", "", "2025-03-26"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := negotiateProtocolVersion(tt.clientVersion)
+			if result != tt.expectedVersion {
+				t.Errorf("negotiateProtocolVersion(%q) = %q, want %q",
+					tt.clientVersion, result, tt.expectedVersion)
+			}
+		})
+	}
+}
+
+func TestMCPInitializeVersionNegotiation(t *testing.T) {
+	// Test that initialize response uses negotiated version.
+	server := &testResourceServer{}
+	q := &queryProto{
+		sdkMCPServers: map[string]SdkMcpServer{"test": server},
+	}
+
+	tests := []struct {
+		name            string
+		clientVersion   string
+		expectedVersion string
+	}{
+		{"client requests 2024-11-05", "2024-11-05", "2024-11-05"},
+		{"client requests 2025-03-26", "2025-03-26", "2025-03-26"},
+		{"client requests unsupported", "9999-99-99", "2025-03-26"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := q.handleMCPMessage(context.Background(), map[string]any{
+				"server_name": "test",
+				"message": map[string]any{
+					"id":     "req-1",
+					"method": "initialize",
+					"params": map[string]any{
+						"protocolVersion": tt.clientVersion,
+					},
+				},
+			})
+			if err != nil {
+				t.Fatalf("initialize failed: %v", err)
+			}
+			mcpResp := resp["mcp_response"].(map[string]any)
+			result := mcpResp["result"].(map[string]any)
+			if result["protocolVersion"] != tt.expectedVersion {
+				t.Errorf("expected protocolVersion=%q, got %q",
+					tt.expectedVersion, result["protocolVersion"])
+			}
+		})
+	}
+}
+
+func TestMCPAudioContentSerialization(t *testing.T) {
+	content := MCPAudioContent{
+		Type:     "audio",
+		Data:     "UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQ==",
+		MimeType: "audio/wav",
+	}
+
+	b, err := json.Marshal(content)
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(b, &parsed); err != nil {
+		t.Fatalf("json.Unmarshal failed: %v", err)
+	}
+
+	if parsed["type"] != "audio" {
+		t.Errorf("expected type=audio, got %v", parsed["type"])
+	}
+	if parsed["mimeType"] != "audio/wav" {
+		t.Errorf("expected mimeType=audio/wav, got %v", parsed["mimeType"])
+	}
+	if parsed["data"] == nil {
+		t.Error("expected data to be set")
+	}
+}
+
+func TestMCPResourceLinkSerialization(t *testing.T) {
+	link := MCPResourceLink{
+		Type:        "resource_link",
+		URI:         "file:///test.txt",
+		Name:        "test.txt",
+		Description: "A test file",
+		MimeType:    "text/plain",
+	}
+
+	b, err := json.Marshal(link)
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(b, &parsed); err != nil {
+		t.Fatalf("json.Unmarshal failed: %v", err)
+	}
+
+	if parsed["type"] != "resource_link" {
+		t.Errorf("expected type=resource_link, got %v", parsed["type"])
+	}
+	if parsed["uri"] != "file:///test.txt" {
+		t.Errorf("expected uri=file:///test.txt, got %v", parsed["uri"])
+	}
+	if parsed["name"] != "test.txt" {
+		t.Errorf("expected name=test.txt, got %v", parsed["name"])
+	}
+}
+
+func TestMCPResourceTemplateSerialization(t *testing.T) {
+	template := MCPResourceTemplate{
+		URITemplate: "file:///{path}",
+		Name:        "Local Files",
+		Description: "Access local filesystem files",
+		MimeType:    "application/octet-stream",
+	}
+
+	b, err := json.Marshal(template)
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(b, &parsed); err != nil {
+		t.Fatalf("json.Unmarshal failed: %v", err)
+	}
+
+	if parsed["uriTemplate"] != "file:///{path}" {
+		t.Errorf("expected uriTemplate=file:///{path}, got %v", parsed["uriTemplate"])
+	}
+	if parsed["name"] != "Local Files" {
+		t.Errorf("expected name=Local Files, got %v", parsed["name"])
+	}
+}
+
+func TestMCPOutputSchemaInToolDefinition(t *testing.T) {
+	// Test that OutputSchema is serialized in tools/list.
+	server := &testOutputSchemaServer{
+		tools: []MCPTool{
+			{
+				Name:        "get_weather",
+				Description: "Get weather",
+				InputSchema: map[string]any{"type": "object"},
+				OutputSchema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"temperature": map[string]any{"type": "number"},
+					},
+				},
+			},
+		},
+	}
+	q := &queryProto{
+		sdkMCPServers: map[string]SdkMcpServer{"test": server},
+	}
+
+	resp, err := q.handleMCPMessage(context.Background(), map[string]any{
+		"server_name": "test",
+		"message": map[string]any{
+			"id":     "req-1",
+			"method": "tools/list",
+		},
+	})
+	if err != nil {
+		t.Fatalf("tools/list failed: %v", err)
+	}
+	mcpResp := resp["mcp_response"].(map[string]any)
+	result := mcpResp["result"].(map[string]any)
+	tools := result["tools"].([]any)
+	if len(tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(tools))
+	}
+	tool := tools[0].(map[string]any)
+	if tool["outputSchema"] == nil {
+		t.Error("expected outputSchema to be present")
+	}
+}
+
+func TestMCPStructuredContentInToolResult(t *testing.T) {
+	// Test that structuredContent is serialized in tools/call result.
+	server := &testOutputSchemaServer{
+		tools: []MCPTool{
+			{Name: "get_weather", InputSchema: map[string]any{"type": "object"}},
+		},
+		result: ToolResult{
+			Content: []map[string]any{
+				{"type": "text", "text": "Temperature: 72F"},
+			},
+			StructuredContent: map[string]any{
+				"temperature": 72,
+				"condition":   "Sunny",
+			},
+		},
+	}
+	q := &queryProto{
+		sdkMCPServers: map[string]SdkMcpServer{"test": server},
+	}
+
+	resp, err := q.handleMCPMessage(context.Background(), map[string]any{
+		"server_name": "test",
+		"message": map[string]any{
+			"id":     "req-1",
+			"method": "tools/call",
+			"params": map[string]any{
+				"name":      "get_weather",
+				"arguments": map[string]any{},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("tools/call failed: %v", err)
+	}
+	mcpResp := resp["mcp_response"].(map[string]any)
+	result := mcpResp["result"].(map[string]any)
+	if result["structuredContent"] == nil {
+		t.Error("expected structuredContent to be present")
+	}
+}
+
+func TestMCPResourceTemplateInListResources(t *testing.T) {
+	// Test that resources/list returns resourceTemplates when supported.
+	server := &testResourceTemplateServer{
+		resources: []MCPResource{
+			{URI: "file:///test.txt", Name: "test.txt"},
+		},
+		templates: []MCPResourceTemplate{
+			{URITemplate: "file:///{path}", Name: "Local Files"},
+		},
+	}
+	q := &queryProto{
+		sdkMCPServers: map[string]SdkMcpServer{"test": server},
+	}
+
+	resp, err := q.handleMCPMessage(context.Background(), map[string]any{
+		"server_name": "test",
+		"message": map[string]any{
+			"id":     "req-1",
+			"method": "resources/list",
+		},
+	})
+	if err != nil {
+		t.Fatalf("resources/list failed: %v", err)
+	}
+	mcpResp := resp["mcp_response"].(map[string]any)
+	result := mcpResp["result"].(map[string]any)
+	if result["resourceTemplates"] == nil {
+		t.Error("expected resourceTemplates to be present")
+	}
+}
+
+func TestMCPCapabilitiesWithResourceTemplate(t *testing.T) {
+	// Test that capabilities include templates when server supports it.
+	server := &testResourceTemplateServer{
+		resources: []MCPResource{},
+		templates: []MCPResourceTemplate{},
+	}
+	q := &queryProto{
+		sdkMCPServers: map[string]SdkMcpServer{"test": server},
+	}
+
+	resp, err := q.handleMCPMessage(context.Background(), map[string]any{
+		"server_name": "test",
+		"message": map[string]any{
+			"id":     "req-1",
+			"method": "initialize",
+		},
+	})
+	if err != nil {
+		t.Fatalf("initialize failed: %v", err)
+	}
+	mcpResp := resp["mcp_response"].(map[string]any)
+	result := mcpResp["result"].(map[string]any)
+	caps := result["capabilities"].(map[string]any)
+	resources := caps["resources"].(map[string]any)
+	if resources["templates"] != true {
+		t.Error("expected resources.templates=true")
+	}
+}
+
+func TestMCPCapabilitiesWithoutResourceTemplate(t *testing.T) {
+	// Test that capabilities don't include templates when server doesn't support it.
+	server := &testResourceServer{}
+	q := &queryProto{
+		sdkMCPServers: map[string]SdkMcpServer{"test": server},
+	}
+
+	resp, err := q.handleMCPMessage(context.Background(), map[string]any{
+		"server_name": "test",
+		"message": map[string]any{
+			"id":     "req-1",
+			"method": "initialize",
+		},
+	})
+	if err != nil {
+		t.Fatalf("initialize failed: %v", err)
+	}
+	mcpResp := resp["mcp_response"].(map[string]any)
+	result := mcpResp["result"].(map[string]any)
+	caps := result["capabilities"].(map[string]any)
+	resources := caps["resources"].(map[string]any)
+	if resources["templates"] != nil {
+		t.Errorf("expected no templates, got %v", resources["templates"])
+	}
+}
+
+// Helper server types for MCP 2.x tests
+
+type testOutputSchemaServer struct {
+	tools  []MCPTool
+	result ToolResult
+}
+
+func (s *testOutputSchemaServer) Name() string    { return "test-output-schema" }
+func (s *testOutputSchemaServer) Version() string { return "1.0.0" }
+func (s *testOutputSchemaServer) ListTools(_ context.Context) ([]MCPTool, error) {
+	return s.tools, nil
+}
+func (s *testOutputSchemaServer) CallTool(_ context.Context, _ string, _ map[string]any) (ToolResult, error) {
+	return s.result, nil
+}
+func (s *testOutputSchemaServer) ListResources(_ context.Context) ([]MCPResource, error) {
+	return nil, nil
+}
+func (s *testOutputSchemaServer) ReadResource(_ context.Context, _ string) (MCPResourceContent, error) {
+	return MCPResourceContent{}, nil
+}
+func (s *testOutputSchemaServer) ListPrompts(_ context.Context) ([]MCPPrompt, error) {
+	return nil, nil
+}
+func (s *testOutputSchemaServer) GetPrompt(_ context.Context, _ string, _ map[string]any) (MCPPromptResult, error) {
+	return MCPPromptResult{}, nil
+}
+
+type testResourceTemplateServer struct {
+	resources []MCPResource
+	templates []MCPResourceTemplate
+}
+
+func (s *testResourceTemplateServer) Name() string    { return "test-template" }
+func (s *testResourceTemplateServer) Version() string { return "1.0.0" }
+func (s *testResourceTemplateServer) ListTools(_ context.Context) ([]MCPTool, error) {
+	return nil, nil
+}
+func (s *testResourceTemplateServer) CallTool(_ context.Context, _ string, _ map[string]any) (ToolResult, error) {
+	return ToolResult{}, nil
+}
+func (s *testResourceTemplateServer) ListResources(_ context.Context) ([]MCPResource, error) {
+	return s.resources, nil
+}
+func (s *testResourceTemplateServer) ReadResource(_ context.Context, _ string) (MCPResourceContent, error) {
+	return MCPResourceContent{}, nil
+}
+func (s *testResourceTemplateServer) ListPrompts(_ context.Context) ([]MCPPrompt, error) {
+	return nil, nil
+}
+func (s *testResourceTemplateServer) GetPrompt(_ context.Context, _ string, _ map[string]any) (MCPPromptResult, error) {
+	return MCPPromptResult{}, nil
+}
+func (s *testResourceTemplateServer) ListResourceTemplates(_ context.Context) ([]MCPResourceTemplate, error) {
+	return s.templates, nil
 }

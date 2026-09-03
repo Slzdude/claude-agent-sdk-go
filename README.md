@@ -123,8 +123,8 @@ type MyServer struct{}
 func (s *MyServer) Name() string    { return "my-tools" }
 func (s *MyServer) Version() string { return "1.0.0" }
 
-func (s *MyServer) Tools() []claude.SdkMcpTool {
-    return []claude.SdkMcpTool{
+func (s *MyServer) ListTools(ctx context.Context) ([]claude.MCPTool, error) {
+    return []claude.MCPTool{
         {
             Name:        "greet",
             Description: "Greet a user",
@@ -136,27 +136,133 @@ func (s *MyServer) Tools() []claude.SdkMcpTool {
                 "required": []any{"name"},
             },
         },
-    }
+    }, nil
 }
 
-func (s *MyServer) Execute(ctx context.Context, toolName string, input map[string]any) (*claude.SdkMcpToolResult, error) {
-    if toolName == "greet" {
-        name, _ := input["name"].(string)
-        return &claude.SdkMcpToolResult{
+func (s *MyServer) CallTool(ctx context.Context, name string, input map[string]any) (claude.ToolResult, error) {
+    if name == "greet" {
+        userName, _ := input["name"].(string)
+        return claude.ToolResult{
             Content: []map[string]any{
-                {"type": "text", "text": "Hello, " + name + "!"},
+                {"type": "text", "text": "Hello, " + userName + "!"},
             },
         }, nil
     }
-    return nil, fmt.Errorf("unknown tool: %s", toolName)
+    return claude.ToolResult{}, fmt.Errorf("unknown tool: %s", name)
 }
+
+// Implement other required methods...
+func (s *MyServer) ListResources(ctx context.Context) ([]claude.MCPResource, error) { return nil, nil }
+func (s *MyServer) ReadResource(ctx context.Context, uri string) (claude.MCPResourceContent, error) { return claude.MCPResourceContent{}, nil }
+func (s *MyServer) ListPrompts(ctx context.Context) ([]claude.MCPPrompt, error) { return nil, nil }
+func (s *MyServer) GetPrompt(ctx context.Context, name string, args map[string]any) (claude.MCPPromptResult, error) { return claude.MCPPromptResult{}, nil }
 
 // Use with Claude
 opts := &claude.ClaudeAgentOptions{
-    McpServers: map[string]claude.McpServerConfig{
-        "tools": &MyServer{},
+    MCPServers: map[string]claude.MCPServerConfig{
+        "tools": &claude.MCPSdkServerConfig{Name: "my-tools", Instance: &MyServer{}},
     },
     AllowedTools: []string{"mcp__tools__greet"},
+}
+```
+
+### MCP 2.x Features (v0.2.149+)
+
+The Go SDK supports MCP protocol versions `2024-11-05`, `2025-03-26`, `2025-06-18`, and `2025-11-25`.
+
+#### Version Negotiation
+
+The SDK automatically negotiates the protocol version with the client:
+
+```go
+// Client requests "2025-03-26" → Server responds "2025-03-26"
+// Client requests "2024-11-05" → Server responds "2024-11-05"
+// Client requests unknown version → Server responds "2025-03-26" (default)
+```
+
+#### Output Schema
+
+Tools can define an output schema for structured content:
+
+```go
+tools := []claude.MCPTool{
+    {
+        Name:        "get_weather",
+        Description: "Get current weather",
+        InputSchema: map[string]any{
+            "type": "object",
+            "properties": map[string]any{
+                "location": map[string]any{"type": "string"},
+            },
+            "required": []any{"location"},
+        },
+        OutputSchema: map[string]any{
+            "type": "object",
+            "properties": map[string]any{
+                "temperature": map[string]any{"type": "number"},
+                "condition":   map[string]any{"type": "string"},
+            },
+        },
+    },
+}
+
+// Return structured content
+func (s *MyServer) CallTool(ctx context.Context, name string, input map[string]any) (claude.ToolResult, error) {
+    return claude.ToolResult{
+        Content: []map[string]any{
+            {"type": "text", "text": "Temperature: 72F, Condition: Sunny"},
+        },
+        StructuredContent: map[string]any{
+            "temperature": 72,
+            "condition":   "Sunny",
+        },
+    }, nil
+}
+```
+
+#### Resource Templates
+
+Servers can expose resource templates for dynamic resource discovery:
+
+```go
+type MyServer struct{}
+
+// Implement ListResourceTemplates to expose resource templates
+func (s *MyServer) ListResourceTemplates(ctx context.Context) ([]claude.MCPResourceTemplate, error) {
+    return []claude.MCPResourceTemplate{
+        {
+            URITemplate: "file:///{path}",
+            Name:        "Local Files",
+            Description: "Access local filesystem files",
+            MimeType:    "application/octet-stream",
+        },
+    }, nil
+}
+```
+
+When a server implements `ListResourceTemplates()`, the SDK automatically:
+- Includes `resourceTemplates` in `resources/list` responses
+- Advertises `templates` capability in `initialize` response
+
+#### New Content Types
+
+The SDK supports new MCP 2.x content types:
+
+```go
+// Audio content
+audio := claude.MCPAudioContent{
+    Type:     "audio",
+    Data:     base64EncodedAudio,
+    MimeType: "audio/wav",
+}
+
+// Resource link (in tool results)
+resourceLink := claude.MCPResourceLink{
+    Type:        "resource_link",
+    URI:         "file:///path/to/file",
+    Name:        "document.pdf",
+    Description: "Project documentation",
+    MimeType:    "application/pdf",
 }
 ```
 
@@ -198,7 +304,7 @@ opts := &claude.ClaudeAgentOptions{
 
 ## Types
 
-See [types.go](types.go) for complete type definitions:
+See [types.go](types.go) and [mcp.go](mcp.go) for complete type definitions:
 
 - `ClaudeAgentOptions` — Configuration options (including `SessionID`, `TaskBudget`, `Thinking`)
 - `AssistantMessage`, `UserMessage`, `SystemMessage`, `ResultMessage`, `RateLimitEvent` — Message types
@@ -206,6 +312,7 @@ See [types.go](types.go) for complete type definitions:
 - `ContextUsageResponse`, `ContextUsageCategory` — Context window usage
 - `HookMatcher`, `HookEvent`, `HookFunc` — Hook system types
 - `SdkMcpServer`, `MCPTool`, `ToolResult` — SDK MCP server types
+- `MCPAudioContent`, `MCPResourceLink`, `MCPResourceTemplate` — MCP 2.x content types
 - `PermissionMode` — `default`, `acceptEdits`, `plan`, `bypassPermissions`, `dontAsk`, `auto`
 
 ## Session Management

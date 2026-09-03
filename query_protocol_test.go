@@ -301,7 +301,8 @@ func TestHandleMCPMessage_Initialize(t *testing.T) {
 	}
 	mcp := resp["mcp_response"].(map[string]any)
 	result := mcp["result"].(map[string]any)
-	if result["protocolVersion"] != "2024-11-05" {
+	// When no protocolVersion is provided, returns default negotiated version
+	if result["protocolVersion"] != MCPDefaultNegotiatedVersion {
 		t.Errorf("wrong protocolVersion: %v", result["protocolVersion"])
 	}
 }

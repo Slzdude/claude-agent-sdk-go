@@ -2,6 +2,41 @@ package claude
 
 import "context"
 
+// MCP protocol versions.
+// See https://modelcontextprotocol.io/specification
+const (
+	MCPProtocolVersion20241105 = "2024-11-05"
+	MCPProtocolVersion20250326 = "2025-03-26"
+	MCPProtocolVersion20250618 = "2025-06-18"
+	MCPProtocolVersion20251125 = "2025-11-25"
+)
+
+// MCPDefaultNegotiatedVersion is the fallback version returned when the
+// client's requested version is not in the supported set.
+// Matches Python SDK's DEFAULT_NEGOTIATED_VERSION.
+const MCPDefaultNegotiatedVersion = MCPProtocolVersion20250326
+
+// MCPSupportedProtocolVersions lists all protocol versions this SDK supports.
+var MCPSupportedProtocolVersions = []string{
+	MCPProtocolVersion20241105,
+	MCPProtocolVersion20250326,
+	MCPProtocolVersion20250618,
+	MCPProtocolVersion20251125,
+}
+
+// negotiateProtocolVersion returns the protocol version to use in the
+// initialize response. If the client's version is supported, it is echoed
+// back; otherwise MCPDefaultNegotiatedVersion is returned.
+// Matches Python SDK's version negotiation logic.
+func negotiateProtocolVersion(clientVersion string) string {
+	for _, v := range MCPSupportedProtocolVersions {
+		if v == clientVersion {
+			return clientVersion
+		}
+	}
+	return MCPDefaultNegotiatedVersion
+}
+
 // MCPServerConfig is implemented by all MCP server configuration types.
 type MCPServerConfig interface {
 	mcpServerType() string
@@ -42,8 +77,9 @@ func (c *MCPSdkServerConfig) mcpServerType() string { return "sdk" }
 
 // ToolResult is returned by an SdkMcpServer tool call.
 type ToolResult struct {
-	Content []map[string]any `json:"content"`
-	IsError bool             `json:"isError,omitempty"`
+	Content           []map[string]any `json:"content"`
+	StructuredContent map[string]any   `json:"structuredContent,omitempty"` // MCP 2025-03-26+
+	IsError           bool             `json:"isError,omitempty"`
 }
 
 // SdkMcpServer is an in-process MCP server that the SDK bridges to the CLI.
@@ -68,11 +104,12 @@ type SdkMcpServer interface {
 
 // MCPTool describes a single tool exposed by an MCP server.
 type MCPTool struct {
-	Name        string           `json:"name"`
-	Description string           `json:"description,omitempty"`
-	InputSchema map[string]any   `json:"inputSchema"`
-	Annotations *ToolAnnotations `json:"annotations,omitempty"`
-	Meta        map[string]any   `json:"_meta,omitempty"`
+	Name         string           `json:"name"`
+	Description  string           `json:"description,omitempty"`
+	InputSchema  map[string]any   `json:"inputSchema"`
+	OutputSchema map[string]any   `json:"outputSchema,omitempty"` // MCP 2025-03-26+
+	Annotations  *ToolAnnotations `json:"annotations,omitempty"`
+	Meta         map[string]any   `json:"_meta,omitempty"`
 }
 
 // ToolAnnotations provides optional hints about a tool's behaviour.
@@ -126,6 +163,33 @@ type MCPPromptResult struct {
 type MCPPromptResultMessage struct {
 	Role    string `json:"role"`
 	Content any    `json:"content"` // string or map[string]any
+}
+
+// MCPAudioContent represents audio content in MCP responses.
+// Added in MCP 2025-03-26.
+type MCPAudioContent struct {
+	Type     string `json:"type"`     // "audio"
+	Data     string `json:"data"`     // base64 encoded audio
+	MimeType string `json:"mimeType"` // e.g. "audio/wav", "audio/mp3"
+}
+
+// MCPResourceLink represents a link to a resource in tool/prompt results.
+// Added in MCP 2025-03-26.
+type MCPResourceLink struct {
+	Type        string `json:"type"`        // "resource_link"
+	URI         string `json:"uri"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	MimeType    string `json:"mimeType,omitempty"`
+}
+
+// MCPResourceTemplate represents a resource template with a URI pattern.
+// Added in MCP 2025-03-26.
+type MCPResourceTemplate struct {
+	URITemplate string `json:"uriTemplate"` // RFC 6570 URI template
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	MimeType    string `json:"mimeType,omitempty"`
 }
 
 // McpServerConnectionStatus enumerates MCP server connection states.

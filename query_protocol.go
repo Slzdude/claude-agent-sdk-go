@@ -723,11 +723,25 @@ func (q *queryProto) handleMCPMessage(ctx context.Context, req map[string]any) (
 
 	switch method {
 	case "initialize":
+		// Negotiate protocol version based on client's request.
+		params, _ := msgRaw["params"].(map[string]any)
+		clientVersion := strVal(params, "protocolVersion")
+		negotiatedVersion := negotiateProtocolVersion(clientVersion)
+
+		// Build capabilities based on server support.
+		resourcesCaps := map[string]any{}
+		type resourceTemplateServer interface {
+			ListResourceTemplates(ctx context.Context) ([]MCPResourceTemplate, error)
+		}
+		if _, ok := server.(resourceTemplateServer); ok {
+			resourcesCaps["templates"] = true
+		}
+
 		return buildResponse(map[string]any{
-			"protocolVersion": "2024-11-05",
+			"protocolVersion": negotiatedVersion,
 			"capabilities": map[string]any{
 				"tools":     map[string]any{},
-				"resources": map[string]any{},
+				"resources": resourcesCaps,
 				"prompts":   map[string]any{},
 			},
 			"serverInfo": map[string]any{
@@ -786,10 +800,21 @@ func (q *queryProto) handleMCPMessage(ctx context.Context, req map[string]any) (
 		if err != nil {
 			return buildError(-32603, err.Error()), nil
 		}
-		b, _ := json.Marshal(map[string]any{"resources": resources})
-		var result map[string]any
-		_ = json.Unmarshal(b, &result)
-		return buildResponse(result), nil
+		result := map[string]any{"resources": resources}
+		// Check if server supports ResourceTemplate (MCP 2025-03-26+)
+		type resourceTemplateServer interface {
+			ListResourceTemplates(ctx context.Context) ([]MCPResourceTemplate, error)
+		}
+		if templateServer, ok := server.(resourceTemplateServer); ok {
+			templates, err := templateServer.ListResourceTemplates(ctx)
+			if err == nil && len(templates) > 0 {
+				result["resourceTemplates"] = templates
+			}
+		}
+		b, _ := json.Marshal(result)
+		var resultMap map[string]any
+		_ = json.Unmarshal(b, &resultMap)
+		return buildResponse(resultMap), nil
 
 	case "resources/read":
 		var params map[string]any
