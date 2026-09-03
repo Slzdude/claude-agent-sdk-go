@@ -333,7 +333,7 @@ func TestHandleMCPMessage_ToolsList(t *testing.T) {
 	}
 }
 
-// TestHandleMCPMessage_NotificationsInitialized verifies JSON-RPC response.
+// TestHandleMCPMessage_NotificationsInitialized verifies no response for notification.
 func TestHandleMCPMessage_NotificationsInitialized(t *testing.T) {
 	q := &queryProto{
 		opts:          &ClaudeAgentOptions{},
@@ -351,12 +351,9 @@ func TestHandleMCPMessage_NotificationsInitialized(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mcp := resp["mcp_response"].(map[string]any)
-	if mcp["jsonrpc"] != "2.0" {
-		t.Errorf("expected jsonrpc 2.0, got %v", mcp["jsonrpc"])
-	}
-	if mcp["result"] == nil {
-		t.Error("expected result field in mcp_response")
+	// notifications/initialized is a notification - no response expected per JSON-RPC spec
+	if resp != nil {
+		t.Errorf("expected nil response for notification, got %v", resp)
 	}
 }
 

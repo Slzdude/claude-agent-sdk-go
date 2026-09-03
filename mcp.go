@@ -16,12 +16,20 @@ const (
 // Matches Python SDK's DEFAULT_NEGOTIATED_VERSION.
 const MCPDefaultNegotiatedVersion = MCPProtocolVersion20250326
 
-// MCPSupportedProtocolVersions lists all protocol versions this SDK supports.
-var MCPSupportedProtocolVersions = []string{
+// mcpSupportedProtocolVersions is the internal list of supported protocol versions.
+var mcpSupportedProtocolVersions = []string{
 	MCPProtocolVersion20241105,
 	MCPProtocolVersion20250326,
 	MCPProtocolVersion20250618,
 	MCPProtocolVersion20251125,
+}
+
+// MCPSupportedProtocolVersions returns a copy of the supported protocol versions.
+// Returns a new slice each time to prevent external modification.
+func MCPSupportedProtocolVersions() []string {
+	result := make([]string, len(mcpSupportedProtocolVersions))
+	copy(result, mcpSupportedProtocolVersions)
+	return result
 }
 
 // negotiateProtocolVersion returns the protocol version to use in the
@@ -29,7 +37,7 @@ var MCPSupportedProtocolVersions = []string{
 // back; otherwise MCPDefaultNegotiatedVersion is returned.
 // Matches Python SDK's version negotiation logic.
 func negotiateProtocolVersion(clientVersion string) string {
-	for _, v := range MCPSupportedProtocolVersions {
+	for _, v := range mcpSupportedProtocolVersions {
 		if v == clientVersion {
 			return clientVersion
 		}

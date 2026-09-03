@@ -670,6 +670,12 @@ func (q *queryProto) handleCanUseTool(ctx context.Context, req map[string]any) (
 	return resp, nil
 }
 
+// resourceTemplateServer is an optional interface for SdkMcpServer implementations
+// that support resource templates (MCP 2025-03-26+).
+type resourceTemplateServer interface {
+	ListResourceTemplates(ctx context.Context) ([]MCPResourceTemplate, error)
+}
+
 func (q *queryProto) handleMCPMessage(ctx context.Context, req map[string]any) (map[string]any, error) {
 	serverName := strVal(req, "server_name")
 	server, ok := q.sdkMCPServers[serverName]
@@ -730,9 +736,6 @@ func (q *queryProto) handleMCPMessage(ctx context.Context, req map[string]any) (
 
 		// Build capabilities based on server support.
 		resourcesCaps := map[string]any{}
-		type resourceTemplateServer interface {
-			ListResourceTemplates(ctx context.Context) ([]MCPResourceTemplate, error)
-		}
 		if _, ok := server.(resourceTemplateServer); ok {
 			resourcesCaps["templates"] = true
 		}
@@ -745,18 +748,15 @@ func (q *queryProto) handleMCPMessage(ctx context.Context, req map[string]any) (
 				"prompts":   map[string]any{},
 			},
 			"serverInfo": map[string]any{
-				"name":    serverName,
-				"version": "1.0.0",
+				"name":    server.Name(),
+				"version": server.Version(),
 			},
 		}), nil
 
 	case "notifications/initialized":
-		// Notification — respond with JSON-RPC envelope (matching Python SDK).
-		return map[string]any{"mcp_response": map[string]any{
-			"jsonrpc": "2.0",
-			"id":      msgID,
-			"result":  map[string]any{},
-		}}, nil
+		// Notification — no response expected per JSON-RPC spec.
+		// Return nil to indicate no response should be sent.
+		return nil, nil
 
 	case "tools/list":
 		tools, err := server.ListTools(ctx)
@@ -802,9 +802,6 @@ func (q *queryProto) handleMCPMessage(ctx context.Context, req map[string]any) (
 		}
 		result := map[string]any{"resources": resources}
 		// Check if server supports ResourceTemplate (MCP 2025-03-26+)
-		type resourceTemplateServer interface {
-			ListResourceTemplates(ctx context.Context) ([]MCPResourceTemplate, error)
-		}
 		if templateServer, ok := server.(resourceTemplateServer); ok {
 			templates, err := templateServer.ListResourceTemplates(ctx)
 			if err == nil && len(templates) > 0 {
@@ -874,6 +871,10 @@ func (q *queryProto) handleMCPMessage(ctx context.Context, req map[string]any) (
 		return nil, nil
 
 	default:
+		// For notifications (no id), don't send a response per JSON-RPC spec.
+		if msgID == nil {
+			return nil, nil
+		}
 		return buildError(-32601, "method not found: "+method), nil
 	}
 }

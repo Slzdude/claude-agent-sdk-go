@@ -286,8 +286,15 @@ func (c *ClaudeSDKClient) ReceiveMessages(ctx context.Context) <-chan Message {
 				} else {
 					lastErrorResult = nil
 				}
-			} else if msgType == "system" && strVal(raw, "subtype") == "session_state_changed" {
-				// Preserve lastErrorResult across session_state_changed
+			} else if msgType == "system" {
+				subtype := strVal(raw, "subtype")
+				// Preserve lastErrorResult across session_state_changed and task lifecycle messages
+				if subtype == "session_state_changed" || subtype == "task_started" ||
+					subtype == "task_notification" || subtype == "task_updated" {
+					// Keep lastErrorResult
+				} else {
+					lastErrorResult = nil
+				}
 			} else {
 				lastErrorResult = nil
 			}
@@ -342,8 +349,15 @@ func (c *ClaudeSDKClient) tracedReceiveMessages(ctx context.Context, out chan Me
 				} else {
 					lastErrorResult = nil
 				}
-			} else if msgType == "system" && strVal(raw, "subtype") == "session_state_changed" {
-				// Preserve lastErrorResult across session_state_changed
+			} else if msgType == "system" {
+				subtype := strVal(raw, "subtype")
+				// Preserve lastErrorResult across session_state_changed and task lifecycle messages
+				if subtype == "session_state_changed" || subtype == "task_started" ||
+					subtype == "task_notification" || subtype == "task_updated" {
+					// Keep lastErrorResult
+				} else {
+					lastErrorResult = nil
+				}
 			} else {
 				lastErrorResult = nil
 			}
